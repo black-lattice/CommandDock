@@ -49,7 +49,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.$errorMessage.compactMap { $0 }.receive(on: RunLoop.main).sink { [weak self] message in
             self?.presentError(message)
         }.store(in: &subscriptions)
-        store.$paused.dropFirst().sink { [weak self] _ in self?.listener.resetGesture(); self?.hideOverlay() }.store(in: &subscriptions)
+        store.$paused.dropFirst().sink { [weak self] paused in
+            guard let self = self else { return }
+            self.hideOverlay()
+            if paused {
+                self.listener.stop()
+                self.store.listenerReady = false
+                self.store.listenerMessage = "监听已暂停。"
+            } else {
+                // @Published emits before paused is updated; reconnect afterwards.
+                DispatchQueue.main.async { [weak self] in self?.connectListener() }
+            }
+        }.store(in: &subscriptions)
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -160,14 +171,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let area = screen.visibleFrame
         overlay.setFrameOrigin(NSPoint(x: area.midX - overlay.frame.width / 2, y: area.midY - overlay.frame.height / 2))
         overlay.makeKeyAndOrderFront(nil)
+        listener.updateOverlayMonitoring()
     }
-    private func hideOverlay() { overlay?.orderOut(nil) }
+    private func hideOverlay() { overlay?.orderOut(nil); listener.updateOverlayMonitoring() }
     @objc private func showSettings() {
         if let front = NSWorkspace.shared.frontmostApplication,
            front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             previousApplication = front
         }
         hideOverlay(); listener.resetGesture()
+        store.refreshApplicationCache()
         if settingsWindow == nil {
             let view = SettingsView(store: store, retryPermission: { [weak self] in self?.reconnect() }, requestPermission: { [weak self] in self?.listener.requestPermission() }, preview: { [weak self] in self?.showFromMenu() }, resizeWindow: { [weak self] size in
                 guard let window = self?.settingsWindow else { return }
@@ -189,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         connectListener()
     }
     private func connectListener() {
+        guard !store.paused else { return }
         let ready = listener.start()
         if store.listenerReady != ready { store.listenerReady = ready }
         if store.listenerMessage != listener.failureReason { store.listenerMessage = listener.failureReason }

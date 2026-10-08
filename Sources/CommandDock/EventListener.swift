@@ -34,7 +34,7 @@ final class EventListener {
         guard let probe = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
             options: .defaultTap, eventsOfInterest: probeMask,
             callback: { _, _, event, _ in Unmanaged.passUnretained(event) }, userInfo: nil) else {
-            installFallbackMouseMonitor()
+            updateOverlayMonitoring()
             failureReason = "全局键盘权限尚未生效。若系统开关已开启，请移除旧的 CommandDock 条目，重新添加应用程序中的新版，再退出并重新启动。"
             return false
         }
@@ -64,6 +64,15 @@ final class EventListener {
         if let monitor = fallbackMouseMonitor { NSEvent.removeMonitor(monitor); fallbackMouseMonitor = nil }
     }
     func resetGesture() { recognizer.reset() }
+    func updateOverlayMonitoring() {
+        installLocalMonitor()
+        if tap == nil && visible() {
+            installFallbackMouseMonitor()
+        } else if let monitor = fallbackMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            fallbackMouseMonitor = nil
+        }
+    }
     func requestPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)

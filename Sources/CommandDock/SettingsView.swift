@@ -18,7 +18,10 @@ struct SettingsView: View {
             general.tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
             bindings.tabItem { Label("应用绑定", systemImage: "keyboard") }.tag(1)
         }.padding(12).frame(width: 1039, height: selectedTab == 1 ? 440 : 540)
-        .onChange(of: selectedTab) { tab in resizeWindow(CGSize(width: 1039, height: tab == 1 ? 440 : 540)) }
+        .onChange(of: selectedTab) { tab in
+            if tab == 1 { store.refreshApplicationCache() }
+            resizeWindow(CGSize(width: 1039, height: tab == 1 ? 440 : 540))
+        }
         .alert("恢复默认绑定？", isPresented: $resetConfirm) {
             Button("取消", role: .cancel) {}
             Button("恢复", role: .destructive) { store.installDefaults() }
@@ -31,17 +34,17 @@ struct SettingsView: View {
                 .foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label(store.listenerReady ? "全局键盘监听已连接" : "全局键盘监听未连接",
-                          systemImage: store.listenerReady ? "checkmark.circle.fill" : "lock.shield")
+                    Label(store.paused ? "全局键盘监听已暂停" : store.listenerReady ? "全局键盘监听已连接" : "全局键盘监听未连接",
+                          systemImage: store.paused ? "pause.circle" : store.listenerReady ? "checkmark.circle.fill" : "lock.shield")
                         .foregroundColor(store.listenerReady ? .green : .orange)
-                    Text(store.listenerReady ? "全局 Command 触发已就绪。仅识别按键与修饰键，不记录输入内容，不上传数据。" : "单击 Command 呼出需要辅助功能授权；手动打开的浮窗仍可使用键盘。点击「启用全局快捷键」，按系统提示允许 CommandDock。")
+                    Text(store.paused ? "取消暂停后会重新连接全局快捷键；仍可通过菜单栏手动显示浮窗。" : store.listenerReady ? "全局 Command 触发已就绪。仅识别按键与修饰键，不记录输入内容，不上传数据。" : "单击 Command 呼出需要辅助功能授权；手动打开的浮窗仍可使用键盘。点击「启用全局快捷键」，按系统提示允许 CommandDock。")
                         .font(.callout).foregroundColor(.secondary)
                     if !store.listenerMessage.isEmpty {
                         Text(store.listenerMessage).font(.caption).foregroundColor(.orange)
                     }
                     HStack {
                         Button("启用全局快捷键", action: requestPermission)
-                        Button("重新连接", action: retryPermission)
+                        Button("重新连接", action: retryPermission).disabled(store.paused)
                         Text("授权后关闭设置窗口再试 ⌘").font(.caption).foregroundColor(.secondary)
                     }
                 }.padding(8).frame(maxWidth: .infinity, alignment: .leading)

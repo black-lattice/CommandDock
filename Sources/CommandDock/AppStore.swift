@@ -13,6 +13,7 @@ final class AppStore: ObservableObject {
         didSet { UserDefaults.standard.set(tapDuration, forKey: "tapDuration") }
     }
     private var iconCache: [String: NSImage] = [:]
+    private var applicationURLs = ApplicationURLCache()
     private let defaults = UserDefaults.standard
 
     init() {
@@ -27,11 +28,18 @@ final class AppStore: ObservableObject {
     }
 
     func binding(for code: UInt16) -> AppBinding? { bindings[code] }
-    func url(for binding: AppBinding) -> URL? {
-        if let identifier = binding.bundleIdentifier,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) { return url }
-        let url = URL(fileURLWithPath: binding.path)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    func url(for binding: AppBinding, refresh: Bool = false) -> URL? {
+        applicationURLs.url(for: binding, refresh: refresh) { binding in
+            if let identifier = binding.bundleIdentifier,
+               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) { return url }
+            let url = URL(fileURLWithPath: binding.path)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+    }
+    func refreshApplicationCache() {
+        applicationURLs.removeAll()
+        iconCache.removeAll()
+        objectWillChange.send()
     }
     func icon(for binding: AppBinding) -> NSImage {
         let key = binding.bundleIdentifier ?? binding.path
@@ -60,12 +68,12 @@ final class AppStore: ObservableObject {
     }
     func set(_ binding: AppBinding?, for code: UInt16) {
         bindings[code] = binding
-        iconCache.removeAll()
+        refreshApplicationCache()
         persist()
     }
     func launch(_ code: UInt16) {
         guard let binding = bindings[code] else { return }
-        guard let url = url(for: binding) else {
+        guard let url = url(for: binding, refresh: true) else {
             errorMessage = "未找到「\(binding.name)」。请先安装应用，或在设置中重新绑定。"; return
         }
         let config = NSWorkspace.OpenConfiguration()
@@ -89,7 +97,7 @@ final class AppStore: ObservableObject {
                     name: FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""))
             }
         }
-        iconCache.removeAll()
+        refreshApplicationCache()
         persist()
     }
     func exportBindings() {
@@ -105,11 +113,10 @@ final class AppStore: ObservableObject {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let data = try Data(contentsOf: url)
-            guard data.count < 1_000_000 else { throw CocoaError(.fileReadTooLarge) }
+            let data = try BoundedFileReader.read(from: url, maximumBytes: 1_000_000)
             let imported = try BindingCodec.decode(data)
             bindings = imported
-            iconCache.removeAll()
+            refreshApplicationCache()
             persist()
         } catch { errorMessage = "导入失败，原绑定未修改：\(error.localizedDescription)" }
     }
