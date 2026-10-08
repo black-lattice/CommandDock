@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION="${VERSION:-1.0.1}"
+VERSION="${VERSION:-1.0.2}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 NOTARIZE="${NOTARIZE:-0}"
