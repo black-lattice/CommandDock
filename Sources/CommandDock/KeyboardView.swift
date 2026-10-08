@@ -4,26 +4,12 @@ import CommandDockCore
 struct KeyboardView: View {
     @ObservedObject var store: AppStore
     let launch: (UInt16) -> Void
-    let settings: () -> Void
     let dismiss: () -> Void
     private let gap: CGFloat = 6
     private func width(_ units: Double) -> CGFloat { CGFloat(units) * 60 + CGFloat(units - 1) * gap }
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                Image(systemName: "command").font(.system(size: 20, weight: .medium)).foregroundColor(.mint)
-                Text("CommandDock").font(.system(size: 16, weight: .semibold, design: .rounded))
-                Spacer()
-                if store.paused || !store.listenerReady {
-                    Label(store.paused ? "监听已暂停" : "需要辅助功能权限", systemImage: "exclamationmark.circle")
-                        .font(.system(size: 12)).foregroundColor(.orange)
-                }
-                Button(action: settings) { Image(systemName: "slider.horizontal.3").frame(width: 32, height: 32) }
-                    .buttonStyle(.plain).help("应用绑定与设置").accessibilityLabel("应用绑定与设置")
-                Button(action: dismiss) { Image(systemName: "xmark").frame(width: 32, height: 32) }
-                    .buttonStyle(.plain).help("关闭浮窗").accessibilityLabel("关闭浮窗")
-            }.frame(height: 32).padding(.bottom, 2)
             HStack(spacing: gap) {
                 Button(action: dismiss) { Text("esc").frame(width: 60, height: 28) }.buttonStyle(KeycapStyle())
                 ForEach(1...12, id: \.self) { n in

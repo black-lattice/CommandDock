@@ -7,15 +7,18 @@ struct SettingsView: View {
     let retryPermission: () -> Void
     let requestPermission: () -> Void
     let preview: () -> Void
+    var resizeWindow: (CGSize) -> Void = { _ in }
+    @State private var selectedTab = 0
     @State private var loginEnabled = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
     @State private var resetConfirm = false
 
     var body: some View {
-        TabView {
-            general.tabItem { Label("通用", systemImage: "gearshape") }
-            bindings.tabItem { Label("应用绑定", systemImage: "keyboard") }
-        }.padding(20).frame(width: 680, height: 540)
+        TabView(selection: $selectedTab) {
+            general.tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
+            bindings.tabItem { Label("应用绑定", systemImage: "keyboard") }.tag(1)
+        }.padding(12).frame(width: 1039, height: selectedTab == 1 ? 440 : 540)
+        .onChange(of: selectedTab) { tab in resizeWindow(CGSize(width: 1039, height: tab == 1 ? 440 : 540)) }
         .alert("恢复默认绑定？", isPresented: $resetConfirm) {
             Button("取消", role: .cancel) {}
             Button("恢复", role: .destructive) { store.installDefaults() }
@@ -64,37 +67,23 @@ struct SettingsView: View {
             Text("⌘C、⌘V、⌘Tab 等组合键保持原有功能。浮窗显示时按组合键会先收起浮窗。安全输入模式（例如密码框）可能暂时阻止全局监听。")
                 .font(.caption).foregroundColor(.secondary)
             Spacer(minLength: 0)
-            HStack { Button("显示浮窗", action: preview); Spacer(); Text("CommandDock \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版") · 原生 macOS").font(.caption).foregroundColor(.secondary) }
-        }.padding(16)
-    }
-    private var bindings: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("按 MacBook 键位绑定应用").font(.headline)
-            Text("绑定使用物理键位，中文输入法下也能使用。切换电脑后会优先通过应用标识定位，无需保持相同安装路径。")
-                .font(.caption).foregroundColor(.secondary)
-            List(KeyboardLayout.bindable) { key in
-                HStack(spacing: 12) {
-                    Text(key.label).font(.system(.body, design: .monospaced)).frame(width: 46, alignment: .leading)
-                    if let binding = store.binding(for: key.code) {
-                        Image(nsImage: store.icon(for: binding)).resizable().frame(width: 24, height: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(binding.name)
-                            Text(store.url(for: binding) == nil ? "此电脑未安装该应用" : binding.bundleIdentifier ?? binding.path)
-                                .font(.caption2).foregroundColor(store.url(for: binding) == nil ? .orange : .secondary).lineLimit(1)
-                        }
-                    } else { Text("未绑定").foregroundColor(.secondary) }
-                    Spacer()
-                    Button("选择应用") { store.chooseApplication(for: key) }
-                    Button { store.set(nil, for: key.code) } label: { Image(systemName: "xmark.circle") }
-                        .buttonStyle(.borderless).disabled(store.binding(for: key.code) == nil).help("清除绑定")
-                }.padding(.vertical, 3)
-            }
             HStack {
+                Button("显示浮窗", action: preview)
                 Button("导入绑定") { store.importBindings() }
                 Button("导出绑定") { store.exportBindings() }
                 Spacer()
+                Text("CommandDock \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版") · 原生 macOS")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        }.padding(16).frame(maxWidth: 640).frame(maxWidth: .infinity)
+    }
+    private var bindings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            BindingKeyboardView(store: store)
+            HStack {
+                Spacer()
                 Button("恢复默认") { resetConfirm = true }
             }
-        }.padding(16)
+        }.padding(16).frame(maxHeight: .infinity, alignment: .top)
     }
 }

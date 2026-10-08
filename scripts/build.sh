@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION="${VERSION:-1.0.2}"
+VERSION="${VERSION:-1.0.3}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 NOTARIZE="${NOTARIZE:-0}"
@@ -26,7 +26,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>CommandDock</string>
-<key>CFBundleIdentifier</key><string>vip.haoduo.CommandDock</string>
+<key>CFBundleIdentifier</key><string>yunfenggroup.CommandDock</string>
 <key>CFBundleName</key><string>CommandDock</string>
 <key>CFBundleDisplayName</key><string>CommandDock</string>
 <key>CFBundlePackageType</key><string>APPL</string>

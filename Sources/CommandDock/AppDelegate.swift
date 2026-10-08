@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        let identifier = Bundle.main.bundleIdentifier ?? "vip.haoduo.CommandDock"
+        let identifier = Bundle.main.bundleIdentifier ?? "yunfenggroup.CommandDock"
         if NSRunningApplication.runningApplications(withBundleIdentifier: identifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
             NSApp.terminate(nil); return
         }
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeOverlay() -> LauncherPanel {
         let root = KeyboardView(store: store, launch: { [weak self] code in
             self?.hideOverlay(); self?.store.launch(code)
-        }, settings: { [weak self] in self?.showSettings() }, dismiss: { [weak self] in self?.hideOverlay() })
+        }, dismiss: { [weak self] in self?.hideOverlay() })
         let hosting = NSHostingView(rootView: root)
         let size = hosting.fittingSize
         let panel = LauncherPanel(contentRect: NSRect(origin: .zero, size: size),
@@ -169,8 +169,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         hideOverlay(); listener.resetGesture()
         if settingsWindow == nil {
-            let view = SettingsView(store: store, retryPermission: { [weak self] in self?.reconnect() }, requestPermission: { [weak self] in self?.listener.requestPermission() }, preview: { [weak self] in self?.showFromMenu() })
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 540),
+            let view = SettingsView(store: store, retryPermission: { [weak self] in self?.reconnect() }, requestPermission: { [weak self] in self?.listener.requestPermission() }, preview: { [weak self] in self?.showFromMenu() }, resizeWindow: { [weak self] size in
+                guard let window = self?.settingsWindow else { return }
+                let top = window.frame.maxY
+                window.setContentSize(size)
+                window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+            })
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1039, height: 540),
                 styleMask: [.titled,.closable,.miniaturizable], backing: .buffered, defer: false)
             window.title = "CommandDock 设置"; window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: view); window.delegate = self; window.center()
