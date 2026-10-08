@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.0.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 OUT="${OUT_DIR:-dist}"
 mkdir -p "$OUT"

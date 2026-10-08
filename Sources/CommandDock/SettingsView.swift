@@ -5,6 +5,7 @@ import CommandDockCore
 struct SettingsView: View {
     @ObservedObject var store: AppStore
     let retryPermission: () -> Void
+    let requestPermission: () -> Void
     let preview: () -> Void
     @State private var loginEnabled = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
@@ -27,16 +28,18 @@ struct SettingsView: View {
                 .foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label(store.listenerReady ? "全局键盘监听已启用" : "需要辅助功能权限",
+                    Label(store.listenerReady ? "全局键盘监听已连接" : "全局键盘监听未连接",
                           systemImage: store.listenerReady ? "checkmark.circle.fill" : "lock.shield")
                         .foregroundColor(store.listenerReady ? .green : .orange)
-                    Text("在系统设置 → 隐私与安全性 → 辅助功能中允许 CommandDock。只识别按键与修饰键，不记录输入内容，也不上传数据。授权后点击下方按钮重新连接。")
+                    Text(store.listenerReady ? "全局 Command 触发已就绪。仅识别按键与修饰键，不记录输入内容，不上传数据。" : "单击 Command 呼出需要辅助功能授权；手动打开的浮窗仍可使用键盘。点击「启用全局快捷键」，按系统提示允许 CommandDock。")
                         .font(.callout).foregroundColor(.secondary)
+                    if !store.listenerMessage.isEmpty {
+                        Text(store.listenerMessage).font(.caption).foregroundColor(.orange)
+                    }
                     HStack {
-                        Button("打开权限设置") {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                        }
-                        Button("已授权，重新连接", action: retryPermission)
+                        Button("启用全局快捷键", action: requestPermission)
+                        Button("重新连接", action: retryPermission)
+                        Text("授权后关闭设置窗口再试 ⌘").font(.caption).foregroundColor(.secondary)
                     }
                 }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
             }

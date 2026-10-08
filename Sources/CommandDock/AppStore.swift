@@ -6,6 +6,7 @@ import CommandDockCore
 final class AppStore: ObservableObject {
     @Published private(set) var bindings: [UInt16: AppBinding] = [:]
     @Published var listenerReady = false
+    @Published var listenerMessage = ""
     @Published var paused = false
     @Published var errorMessage: String?
     @Published var tapDuration: Double {

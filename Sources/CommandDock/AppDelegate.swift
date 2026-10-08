@@ -4,7 +4,7 @@ import Combine
 import ApplicationServices
 
 private final class LauncherPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var subscriptions: Set<AnyCancellable> = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var showingError = false
+    private var previousApplication: NSRunningApplication?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -28,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupMenu()
         listener.enabled = { [weak self] in
             guard let self = self else { return false }
-            return !self.store.paused && self.settingsWindow?.isVisible != true && !self.showingError
+            return !self.store.paused && self.settingsWindow?.isKeyWindow != true && !self.showingError
         }
         listener.visible = { [weak self] in self?.overlay?.isVisible == true }
         listener.bound = { [weak self] code in self?.store.binding(for: code) != nil }
@@ -41,7 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         listener.toggle = { [weak self] in self?.toggleOverlay() }
         listener.dismiss = { [weak self] in self?.hideOverlay() }
         listener.launch = { [weak self] code in self?.store.launch(code) }
-        listener.failed = { [weak self] in self?.store.listenerReady = false }
+        listener.failed = { [weak self] in
+            self?.store.listenerReady = false
+            self?.store.listenerMessage = "全局监听已断开，请在设置中重新连接。"
+        }
         store.$errorMessage.compactMap { $0 }.receive(on: RunLoop.main).sink { [weak self] message in
             self?.presentError(message)
         }.store(in: &subscriptions)
@@ -52,17 +56,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.listener.resetGesture(); self?.hideOverlay()
             })
         }
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, !self.store.listenerReady else { return }
+            self.connectListener()
+        })
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.reconnect()
         })
-        store.listenerReady = listener.start()
+        connectListener()
         if !UserDefaults.standard.bool(forKey: "hasLaunched") || !store.listenerReady {
             UserDefaults.standard.set(true, forKey: "hasLaunched")
             showSettings()
         }
     }
     func applicationDidBecomeActive(_ notification: Notification) {
-        if !store.listenerReady { reconnect() }
+        if !store.listenerReady { connectListener() }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showSettings(); return true
@@ -107,6 +115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc private func showFromMenu() {
         settingsWindow?.orderOut(nil)
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            previousApplication?.activate(options: .activateIgnoringOtherApps)
+        }
         DispatchQueue.main.async { [weak self] in self?.showOverlay() }
     }
     private func toggleOverlay() {
@@ -138,13 +149,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else { return }
         let area = screen.visibleFrame
         overlay.setFrameOrigin(NSPoint(x: area.midX - overlay.frame.width / 2, y: area.midY - overlay.frame.height / 2))
-        overlay.orderFrontRegardless()
+        overlay.makeKeyAndOrderFront(nil)
     }
     private func hideOverlay() { overlay?.orderOut(nil) }
     @objc private func showSettings() {
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            previousApplication = front
+        }
         hideOverlay(); listener.resetGesture()
         if settingsWindow == nil {
-            let view = SettingsView(store: store, retryPermission: { [weak self] in self?.reconnect() }, preview: { [weak self] in self?.showFromMenu() })
+            let view = SettingsView(store: store, retryPermission: { [weak self] in self?.reconnect() }, requestPermission: { [weak self] in self?.listener.requestPermission() }, preview: { [weak self] in self?.showFromMenu() })
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 540),
                 styleMask: [.titled,.closable,.miniaturizable], backing: .buffered, defer: false)
             window.title = "CommandDock 设置"; window.isReleasedWhenClosed = false
@@ -156,8 +171,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc private func reconnect() {
         listener.stop()
-        store.listenerReady = listener.start()
-        if !store.listenerReady { showSettings() }
+        connectListener()
+    }
+    private func connectListener() {
+        let ready = listener.start()
+        if store.listenerReady != ready { store.listenerReady = ready }
+        if store.listenerMessage != listener.failureReason { store.listenerMessage = listener.failureReason }
     }
     @objc private func togglePause() { store.paused.toggle() }
     @objc private func quit() { NSApp.terminate(nil) }
