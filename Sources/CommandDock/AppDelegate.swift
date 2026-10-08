@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 import ApplicationServices
+import CommandDockCore
 
 private final class LauncherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -18,6 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var showingError = false
     private var previousApplication: NSRunningApplication?
+    private var overlayApplication: NSRunningApplication?
+    private var session = LauncherSession()
+    private var presentation: DispatchWorkItem?
+    private var sessionStartedAt: TimeInterval = 0
+    private var measuringSession = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -31,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self = self else { return false }
             return !self.store.paused && self.settingsWindow?.isKeyWindow != true && !self.showingError
         }
+        listener.active = { [weak self] in self?.session.isActive == true }
+        listener.reveal = { [weak self] in self?.schedulePresentation(delay: 0) }
         listener.visible = { [weak self] in self?.overlay?.isVisible == true }
         listener.bound = { [weak self] code in self?.store.binding(for: code) != nil }
         listener.maximumDuration = { [weak self] in self?.store.tapDuration ?? 0.5 }
@@ -41,7 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         listener.toggle = { [weak self] in self?.toggleOverlay() }
         listener.dismiss = { [weak self] in self?.hideOverlay() }
-        listener.launch = { [weak self] code in self?.store.launch(code) }
+        listener.outsideClick = { [weak self] in self?.hideOverlay(restoreFocus: false) }
+        listener.launch = { [weak self] code in self?.launch(code) }
         listener.failed = { [weak self] in
             self?.store.listenerReady = false
             self?.store.listenerMessage = "全局监听已断开，请在设置中重新连接。"
@@ -64,15 +73,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.listener.resetGesture(); self?.hideOverlay()
+                self?.listener.resetGesture(); self?.hideOverlay(restoreFocus: false)
             })
         }
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self = self, !self.store.listenerReady else { return }
-            self.connectListener()
+            guard let self = self else { return }
+            if let app = NSWorkspace.shared.frontmostApplication, self.session.isActive,
+               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+               app.processIdentifier != self.overlayApplication?.processIdentifier {
+                self.hideOverlay(restoreFocus: false)
+            }
+            if !self.store.listenerReady { self.connectListener() }
         })
-        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.reconnect()
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.reconnect()
+            })
+        }
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.hideOverlay(restoreFocus: false)
         })
         connectListener()
         if !UserDefaults.standard.bool(forKey: "hasLaunched") || !store.listenerReady {
@@ -87,7 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showSettings(); return true
     }
     func applicationWillTerminate(_ notification: Notification) {
-        listener.stop()
+        presentation?.cancel()
+        listener.stop(force: true)
         workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
     }
     private func setupApplicationMenu() {
@@ -129,14 +149,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
             previousApplication?.activate(options: .activateIgnoringOtherApps)
         }
-        DispatchQueue.main.async { [weak self] in self?.showOverlay() }
+        beginSession(delay: 0, measure: false)
     }
     private func toggleOverlay() {
-        if overlay?.isVisible == true { hideOverlay() } else { showOverlay() }
+        if session.isActive {
+            hideOverlay()
+        } else {
+            beginSession(delay: store.blindLaunchEnabled ? store.hintDelay : 0, measure: store.blindLaunchEnabled)
+        }
+    }
+    private func beginSession(delay: Double, measure: Bool) {
+        hideOverlay(restoreFocus: false)
+        listener.prepareLocalSession()
+        let front = NSWorkspace.shared.frontmostApplication
+        overlayApplication = front?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? previousApplication : front
+        session.begin()
+        sessionStartedAt = ProcessInfo.processInfo.systemUptime
+        measuringSession = measure
+        schedulePresentation(delay: delay)
+    }
+    private func schedulePresentation(delay: Double) {
+        guard session.phase == .waiting else { return }
+        presentation?.cancel()
+        let token = session.presentationToken
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, self.session.phase == .waiting,
+                  self.session.presentationToken == token else { return }
+            // Workspace notifications can arrive after the timer. Recheck the
+            // foreground app so a stale hint cannot steal focus even briefly.
+            if let front = NSWorkspace.shared.frontmostApplication,
+               front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+               front.processIdentifier != self.overlayApplication?.processIdentifier {
+                self.hideOverlay(restoreFocus: false)
+                return
+            }
+            guard self.session.reveal(token: token) else { return }
+            self.presentation = nil
+            self.showOverlay()
+        }
+        presentation = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    private func launch(_ code: UInt16) {
+        hideOverlay(restoreFocus: false, launched: true)
+        // Application lookup and launch stay outside Quartz's event callback.
+        DispatchQueue.main.async { [weak self] in self?.store.launch(code) }
     }
     private func makeOverlay() -> LauncherPanel {
         let root = KeyboardView(store: store, launch: { [weak self] code in
-            self?.hideOverlay(); self?.store.launch(code)
+            self?.launch(code)
         }, dismiss: { [weak self] in self?.hideOverlay() })
         let hosting = NSHostingView(rootView: root)
         let size = hosting.fittingSize
@@ -147,6 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.transient,.ignoresCycle]
         panel.isReleasedWhenClosed = false
+        panel.delegate = self
         // Clip the material and hosting view together; backdrop layers can extend
         // beyond the visual effect view's own rounded layer.
         let content = NSView(frame: NSRect(origin: .zero, size: size))
@@ -167,19 +229,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showOverlay() {
         if overlay == nil { overlay = makeOverlay() }
         guard let overlay = overlay,
-              let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else { return }
+              let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else {
+            hideOverlay(restoreFocus: false)
+            return
+        }
         let area = screen.visibleFrame
         overlay.setFrameOrigin(NSPoint(x: area.midX - overlay.frame.width / 2, y: area.midY - overlay.frame.height / 2))
         overlay.makeKeyAndOrderFront(nil)
         listener.updateOverlayMonitoring()
     }
-    private func hideOverlay() { overlay?.orderOut(nil); listener.updateOverlayMonitoring() }
+    private func hideOverlay(restoreFocus: Bool = true, launched: Bool = false) {
+        let wasVisible = overlay?.isVisible == true
+        let beforeHint = session.phase == .waiting
+        if session.isActive && measuringSession {
+            if launched {
+                store.experiment.recordLaunch(beforeHint: beforeHint,
+                    responseTime: ProcessInfo.processInfo.systemUptime - sessionStartedAt)
+            } else { store.experiment.recordCancellation() }
+        }
+        session.end()
+        presentation?.cancel(); presentation = nil
+        measuringSession = false
+        let previous = overlayApplication
+        overlayApplication = nil
+        overlay?.orderOut(nil)
+        listener.updateOverlayMonitoring()
+        if restoreFocus && wasVisible, let previous = previous, !previous.isTerminated,
+           LauncherFocusPolicy.shouldRestore(previous: previous.processIdentifier,
+               current: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+               launcher: ProcessInfo.processInfo.processIdentifier) {
+            previous.activate(options: .activateIgnoringOtherApps)
+        }
+    }
     @objc private func showSettings() {
         if let front = NSWorkspace.shared.frontmostApplication,
            front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             previousApplication = front
         }
-        hideOverlay(); listener.resetGesture()
+        hideOverlay(restoreFocus: false); listener.resetGesture()
         store.refreshApplicationCache()
         if settingsWindow == nil {
             let view = SettingsView(store: store, retryPermission: { [weak self] in self?.reconnect() }, requestPermission: { [weak self] in self?.listener.requestPermission() }, preview: { [weak self] in self?.showFromMenu() }, resizeWindow: { [weak self] size in
@@ -198,7 +285,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
     @objc private func reconnect() {
-        listener.stop()
+        hideOverlay()
+        listener.stop(force: true)
         connectListener()
     }
     private func connectListener() {
@@ -210,9 +298,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func togglePause() { store.paused.toggle() }
     @objc private func quit() { NSApp.terminate(nil) }
     func windowWillClose(_ notification: Notification) { listener.resetGesture() }
+    func windowDidResignKey(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === overlay, session.isActive {
+            hideOverlay(restoreFocus: false)
+        }
+    }
     private func presentError(_ message: String) {
         guard !showingError else { return }
-        hideOverlay(); showingError = true
+        hideOverlay(restoreFocus: false); showingError = true
         let alert = NSAlert(); alert.messageText = "CommandDock"; alert.informativeText = message
         alert.addButton(withTitle: "好")
         NSApp.activate(ignoringOtherApps: true); alert.runModal()

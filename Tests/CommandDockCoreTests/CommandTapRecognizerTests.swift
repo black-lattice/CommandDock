@@ -2,6 +2,18 @@ import XCTest
 @testable import CommandDockCore
 
 final class CommandTapRecognizerTests: XCTestCase {
+    func testReconnectSeedsAlreadyHeldInputInsteadOfTreatingCommandAsIsolated() {
+        var recognizer = CommandTapRecognizer()
+        recognizer.reset(heldKeys: [8], heldMouseButtons: [0])
+        _ = recognizer.flagsChanged(keyCode: 55, modifiers: .command, time: 1)
+        XCTAssertFalse(recognizer.flagsChanged(keyCode: 55, modifiers: [], time: 1.1))
+        recognizer.keyUp(8)
+        _ = recognizer.flagsChanged(keyCode: 55, modifiers: .command, time: 2)
+        XCTAssertFalse(recognizer.flagsChanged(keyCode: 55, modifiers: [], time: 2.1))
+        recognizer.mouseUp(0)
+        _ = recognizer.flagsChanged(keyCode: 55, modifiers: .command, time: 3)
+        XCTAssertTrue(recognizer.flagsChanged(keyCode: 55, modifiers: [], time: 3.1))
+    }
     func testEitherCommandTriggersOnlyOnRelease() {
         for code: UInt16 in [54, 55] {
             var recognizer = CommandTapRecognizer()

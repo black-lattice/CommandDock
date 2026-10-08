@@ -21,12 +21,12 @@ public struct CommandTapRecognizer {
 
     public init() {}
 
-    public mutating func reset() {
+    public mutating func reset(heldKeys: Set<UInt16> = [], heldMouseButtons: Set<Int> = []) {
         pressedAt = nil
         eligible = false
         commandWasDown = false
-        heldKeys.removeAll()
-        heldMouseButtons.removeAll()
+        self.heldKeys = heldKeys
+        self.heldMouseButtons = heldMouseButtons
     }
 
     public mutating func cancel() { eligible = false }

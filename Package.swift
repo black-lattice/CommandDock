@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "CommandDockCore"),
         .executableTarget(name: "CommandDock", dependencies: ["CommandDockCore"]),
-        .testTarget(name: "CommandDockCoreTests", dependencies: ["CommandDockCore"])
+        .testTarget(name: "CommandDockCoreTests", dependencies: ["CommandDockCore"]),
+        .testTarget(name: "CommandDockTests", dependencies: ["CommandDock", "CommandDockCore"])
     ]
 )

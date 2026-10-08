@@ -64,7 +64,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          VERSION=1.0.4
+          VERSION=1.0.5
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
           export VERSION
           ./scripts/build.sh
@@ -93,6 +93,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: CommandDock-universal
@@ -103,4 +104,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" release/* --verify-tag --title "CommandDock $RELEASE_TAG" --notes "原生 macOS 键盘应用启动器。支持 Intel 和 Apple Silicon，要求 macOS 13 或更新版本。下载 DMG 后将应用拖入 Applications。签名与公证取决于仓库证书配置；首次启动及故障处理请按 README 的安装说明操作。"
+          NOTES_FILE=".github/release-notes/$RELEASE_TAG.md"
+          if [[ -f "$NOTES_FILE" ]]; then
+            gh release create "$RELEASE_TAG" release/* --verify-tag --title "CommandDock $RELEASE_TAG" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$RELEASE_TAG" release/* --verify-tag --title "CommandDock $RELEASE_TAG" --notes "原生 macOS 键盘应用启动器。支持 Intel 和 Apple Silicon，要求 macOS 13 或更新版本。下载 DMG 后将应用拖入 Applications。签名与公证取决于仓库证书配置；首次启动及故障处理请按 README 的安装说明操作。"
+          fi

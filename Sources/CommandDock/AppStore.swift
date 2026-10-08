@@ -8,6 +8,13 @@ final class AppStore: ObservableObject {
     @Published var listenerReady = false
     @Published var listenerMessage = ""
     @Published var paused = false
+    @Published var blindLaunchEnabled: Bool {
+        didSet { defaults.set(blindLaunchEnabled, forKey: "blindLaunchEnabled") }
+    }
+    @Published var hintDelay: Double {
+        didSet { defaults.set(hintDelay, forKey: "hintDelay") }
+    }
+    @Published var experiment = LauncherExperiment()
     @Published var errorMessage: String?
     @Published var tapDuration: Double {
         didSet { UserDefaults.standard.set(tapDuration, forKey: "tapDuration") }
@@ -17,8 +24,11 @@ final class AppStore: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
+        blindLaunchEnabled = UserDefaults.standard.bool(forKey: "blindLaunchEnabled")
+        let delay = UserDefaults.standard.object(forKey: "hintDelay") as? Double ?? 0.25
+        hintDelay = delay.isFinite ? min(max(delay, 0.1), 0.6) : 0.25
         let savedDuration = UserDefaults.standard.double(forKey: "tapDuration")
-        tapDuration = savedDuration > 0 ? savedDuration : 0.5
+        tapDuration = savedDuration.isFinite && savedDuration > 0 ? min(max(savedDuration, 0.2), 0.8) : 0.5
         if let data = defaults.data(forKey: "bindings") {
             do { bindings = try BindingCodec.decode(data) }
             catch { errorMessage = "绑定配置无法读取，已保留原配置。可导入备份或重新绑定。" }

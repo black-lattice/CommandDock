@@ -10,20 +10,29 @@ final class EventListener {
     private(set) var failureReason = ""
     private var recognizer = CommandTapRecognizer()
     private var router = OverlayKeyRouter()
+    private var draining = false
+    private var hasWorkingTap: Bool { tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false }
     var enabled: () -> Bool = { true }
     var visible: () -> Bool = { false }
+    var active: () -> Bool = { false }
+    var reveal: () -> Void = {}
     var bound: (UInt16) -> Bool = { _ in false }
     var overlayContains: (CGPoint) -> Bool = { _ in false }
     var maximumDuration: () -> Double = { 0.5 }
     var toggle: () -> Void = {}
     var dismiss: () -> Void = {}
+    var outsideClick: () -> Void = {}
     var launch: (UInt16) -> Void = { _ in }
     var failed: () -> Void = {}
 
     @discardableResult func start() -> Bool {
         installLocalMonitor()
+        draining = false
+        resetGesture()
+        router.reconcileHeldKeys { CGEventSource.keyState(.combinedSessionState, key: $0) }
         if let tap = tap {
             CGEvent.tapEnable(tap: tap, enable: true)
+            failureReason = ""
             return CGEvent.tapIsEnabled(tap: tap)
         }
         // Ask Quartz itself whether keyboard events are available. A cached AX trust
@@ -57,16 +66,35 @@ final class EventListener {
         failureReason = ""
         return CGEvent.tapIsEnabled(tap: newTap)
     }
-    func stop() {
+    func stop(force: Bool = false) {
+        // Keep the tap only long enough to swallow releases/repeats of keys whose
+        // downs were swallowed. Pausing must not send orphan releases to an app.
+        if !force && hasWorkingTap && router.hasConsumedKeys {
+            draining = true
+            recognizer.reset()
+            return
+        }
+        draining = false
         if let source = source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let tap = tap { CFMachPortInvalidate(tap) }
-        source = nil; tap = nil; recognizer.reset(); router.reset()
+        source = nil; tap = nil; recognizer.reset()
         if let monitor = fallbackMouseMonitor { NSEvent.removeMonitor(monitor); fallbackMouseMonitor = nil }
+        if !force && visible() { installFallbackMouseMonitor() }
     }
-    func resetGesture() { recognizer.reset() }
+    func resetGesture() {
+        let keys = Set((0..<128).map(UInt16.init).filter { CGEventSource.keyState(.combinedSessionState, key: $0) })
+        let buttons = Set((0..<32).filter { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: UInt32($0))!) })
+        recognizer.reset(heldKeys: keys, heldMouseButtons: buttons)
+    }
+    func prepareLocalSession() {
+        guard !hasWorkingTap else { return }
+        // Releases outside our app are unavailable to the local monitor.
+        resetGesture()
+        router.reconcileHeldKeys { CGEventSource.keyState(.combinedSessionState, key: $0) }
+    }
     func updateOverlayMonitoring() {
         installLocalMonitor()
-        if tap == nil && visible() {
+        if !hasWorkingTap && visible() {
             installFallbackMouseMonitor()
         } else if let monitor = fallbackMouseMonitor {
             NSEvent.removeMonitor(monitor)
@@ -83,45 +111,45 @@ final class EventListener {
         fallbackMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             guard let self = self, self.visible(), let primary = NSScreen.screens.first else { return }
             let point = NSEvent.mouseLocation
-            if !self.overlayContains(CGPoint(x: point.x, y: primary.frame.maxY - point.y)) { self.dismiss() }
+            if !self.overlayContains(CGPoint(x: point.x, y: primary.frame.maxY - point.y)) { self.outsideClick() }
         }
     }
     private func installLocalMonitor() {
         guard localMonitor == nil else { return }
-        // The panel must remain keyboard-operable even before global permission is
-        // granted. A filtering tap consumes its routed events before this monitor,
-        // so the two paths do not launch an application twice.
+        // Quartz already routed events when its tap is enabled. The local path
+        // is a fallback, and uses exactly the same action execution.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self = self else { return event }
-            if event.type == .keyUp {
-                if self.tap == nil { self.recognizer.keyUp(event.keyCode) }
-                return self.router.keyUp(code: event.keyCode) == .consume ? nil : event
-            }
-            guard self.visible() else { return event }
-            let flags = self.modifiers(CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue)))
-            if event.type == .flagsChanged {
-                if self.tap == nil {
-                    _ = self.recognizer.flagsChanged(keyCode: event.keyCode, modifiers: flags, time: event.timestamp)
-                }
-                // Restore keyboard focus on modifier-down, before the next keyDown
-                // is targeted, so a system shortcut goes to the previous app.
-                if !flags.isEmpty { self.recognizer.cancel(); self.dismiss() }
-                return event
-            }
-            if self.tap == nil { self.recognizer.keyDown(event.keyCode) }
-            switch self.router.keyDown(code: event.keyCode, modifiers: flags, visible: true,
-                                      bound: self.bound(event.keyCode), repeatKey: event.isARepeat) {
-            case .launch(let code):
-                self.dismiss()
-                DispatchQueue.main.async { [weak self] in self?.launch(code) }
-                return nil
-            case .dismiss, .dismissAndPassThrough:
-                self.dismiss()
-                return nil
-            case .consume: return nil
-            case .passThrough: return event
-            }
+            return self.handleLocalEvent(event)
         }
+    }
+    func handleLocalEvent(_ event: NSEvent) -> NSEvent? {
+        guard !hasWorkingTap else { return event }
+        if event.type == .keyUp {
+            recognizer.keyUp(event.keyCode)
+            return router.keyUp(code: event.keyCode) == .consume ? nil : event
+        }
+        let flags = modifiers(CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue)))
+        if event.type == .flagsChanged {
+            guard active() else { return event }
+            _ = recognizer.flagsChanged(keyCode: event.keyCode, modifiers: flags, time: event.timestamp)
+            // Close on modifier-down, before the shortcut's next key is targeted.
+            if !flags.isEmpty { recognizer.cancel(); dismiss() }
+            return event
+        }
+        recognizer.keyDown(event.keyCode)
+        return routeKey(code: event.keyCode, modifiers: flags, repeatKey: event.isARepeat) ? nil : event
+    }
+    private func routeKey(code: UInt16, modifiers: KeyModifiers, repeatKey: Bool) -> Bool {
+        let isBound = bound(code)
+        let action = router.keyDown(code: code, modifiers: modifiers, visible: active(), bound: isBound, repeatKey: repeatKey)
+        let consumed = action.perform(dismiss: dismiss, launch: launch)
+        // An unassigned key should show help immediately rather than leave the
+        // user in an invisible input session.
+        if action == .consume && active() && !visible() && !isBound && !repeatKey {
+            reveal()
+        }
+        return consumed
     }
     private func modifiers(_ flags: CGEventFlags) -> KeyModifiers {
         var result: KeyModifiers = []
@@ -132,54 +160,61 @@ final class EventListener {
         if flags.contains(.maskSecondaryFn) { result.insert(.function) }
         return result
     }
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+    func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            recognizer.reset()
-            router.reset()
+            resetGesture()
+            router.reconcileHeldKeys { CGEventSource.keyState(.combinedSessionState, key: $0) }
             dismiss()
             if let tap = tap { CGEvent.tapEnable(tap: tap, enable: true) }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, let tap = self.tap else { return }
-                if !CGEvent.tapIsEnabled(tap: tap) { self.stop(); self.failed() }
+                if !CGEvent.tapIsEnabled(tap: tap) { self.stop(force: true); self.failed() }
+                else if self.draining && !self.router.hasConsumedKeys { self.stop(force: true) }
             }
             return Unmanaged.passUnretained(event)
         }
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         if type == .keyUp {
             recognizer.keyUp(code)
-            if router.keyUp(code: code) == .consume { return nil }
+            let consumed = router.keyUp(code: code) == .consume
+            if draining && !router.hasConsumedKeys {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.draining else { return }
+                    self.stop(force: true)
+                    self.updateOverlayMonitoring()
+                }
+            }
+            return consumed ? nil : Unmanaged.passUnretained(event)
         }
-        guard enabled() else { recognizer.reset(); return Unmanaged.passUnretained(event) }
+        if draining {
+            if type == .keyDown && router.keyDown(code: code, modifiers: [], visible: false,
+                bound: false, repeatKey: true) == .consume { return nil }
+            return Unmanaged.passUnretained(event)
+        }
         let flags = modifiers(event.flags)
         switch type {
         case .flagsChanged:
             recognizer.maximumDuration = maximumDuration()
             let trigger = recognizer.flagsChanged(keyCode: code, modifiers: flags,
                                                   time: Double(event.timestamp) / 1_000_000_000)
-            if visible() && !flags.isEmpty {
+            if active() && !flags.isEmpty {
                 recognizer.cancel()
                 dismiss()
-            } else if trigger {
-                // Complete the system modifier event before presenting the panel.
-                DispatchQueue.main.async { [weak self] in if self?.enabled() == true { self?.toggle() } }
+            } else if trigger && enabled() {
+                // Arm synchronously so a following fast keyDown is never lost.
+                // The delegate defers window presentation until after this event.
+                toggle()
             }
+            if !enabled() { recognizer.cancel() }
         case .keyDown:
             recognizer.keyDown(code)
-            let action = router.keyDown(code: code, modifiers: flags, visible: visible(), bound: bound(code),
-                                       repeatKey: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
-            switch action {
-            case .passThrough: break
-            case .dismissAndPassThrough: dismiss()
-            case .consume: return nil
-            case .dismiss: dismiss(); return nil
-            case .launch(let code):
-                dismiss()
-                DispatchQueue.main.async { [weak self] in self?.launch(code) }
-                return nil
-            }
+            // Previously swallowed keys still own their repeats/releases even
+            // after the session ends or triggering is temporarily disabled.
+            if routeKey(code: code, modifiers: flags,
+                repeatKey: event.getIntegerValueField(.keyboardEventAutorepeat) != 0) { return nil }
         case .leftMouseDown,.rightMouseDown,.otherMouseDown:
             recognizer.mouseDown(Int(event.getIntegerValueField(.mouseEventButtonNumber)))
-            if visible() && !overlayContains(event.location) { dismiss() }
+            if active() && (!visible() || !overlayContains(event.location)) { outsideClick() }
         case .leftMouseUp,.rightMouseUp,.otherMouseUp:
             recognizer.mouseUp(Int(event.getIntegerValueField(.mouseEventButtonNumber)))
         default: break
@@ -187,7 +222,7 @@ final class EventListener {
         return Unmanaged.passUnretained(event)
     }
     deinit {
-        stop()
+        stop(force: true)
         if let localMonitor = localMonitor { NSEvent.removeMonitor(localMonitor) }
     }
 }
