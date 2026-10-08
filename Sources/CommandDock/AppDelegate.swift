@@ -136,11 +136,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.transient,.ignoresCycle]
         panel.isReleasedWhenClosed = false
+        // Clip the material and hosting view together; backdrop layers can extend
+        // beyond the visual effect view's own rounded layer.
+        let content = NSView(frame: NSRect(origin: .zero, size: size))
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 18; content.layer?.masksToBounds = true
         let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
         background.material = .hudWindow; background.blendingMode = .behindWindow; background.state = .active
-        background.wantsLayer = true; background.layer?.cornerRadius = 18; background.layer?.masksToBounds = true
-        hosting.frame = background.bounds; hosting.autoresizingMask = [.width,.height]
-        background.addSubview(hosting); panel.contentView = background
+        background.maskImage = NSImage(size: size, flipped: false) { rect in
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18).fill()
+            return true
+        }
+        background.autoresizingMask = [.width,.height]
+        hosting.frame = content.bounds; hosting.autoresizingMask = [.width,.height]
+        content.addSubview(background); content.addSubview(hosting); panel.contentView = content
         return panel
     }
     private func showOverlay() {

@@ -12,6 +12,20 @@
 - 发布包使用 **ad-hoc 签名，尚未经过 Apple Developer ID 签名与公证**。首次打开可能被 Gatekeeper 阻止；确认下载来自本仓库后，在「系统设置 → 隐私与安全性」中使用「仍要打开」。请勿关闭系统安全保护。企业受管设备可能不允许此类应用。
 - 更新后若 macOS 要求重新授权，可在辅助功能列表移除旧条目，再添加新版应用。
 
+### 提示「没有响应」或无法打开
+
+未公证的下载包可能被 macOS 在进入应用代码前拦截，留下无法响应的启动进程。先在「活动监视器」结束 CommandDock，再到「系统设置 → 隐私与安全性」允许打开，然后重新启动。
+
+如果仍提示「没有响应」，且已确认安装包来自本仓库、SHA256 与 Release 中的 `SHA256SUMS.txt` 一致，可在终端执行以下命令。仅移除这个应用的下载隔离标记，不关闭系统 Gatekeeper：
+
+```bash
+pkill -x CommandDock
+xattr -dr com.apple.quarantine /Applications/CommandDock.app
+open /Applications/CommandDock.app
+```
+
+此操作只适用于已核验来源的未公证包；正式分发应使用下方的 Developer ID 签名与公证流程。
+
 ## 从 1.0.0 升级 / 键盘无响应
 
 1. 先通过菜单栏退出旧版，再替换「应用程序」中的 CommandDock。
@@ -55,7 +69,7 @@ swift test
 
 `dist/` 中生成通用 `.app`、DMG、ZIP 和 `SHA256SUMS.txt`。构建脚本分别编译两个架构，再通过 `lipo` 合并并验证。测试覆盖单击 Command、左右 Command、系统快捷键、修饰键组合、长按、鼠标组合、已有按键按住、浮窗键盘事件及绑定文件解析。
 
-可以通过 `VERSION`、`BUILD_NUMBER`、`OUT_DIR` 调整构建版本和输出目录；`SIGNING_IDENTITY` 默认为 ad-hoc。正式 Developer ID 分发还需自行配置签名、hardened runtime 与 Apple 公证，此流程不包含 Apple 证书或账号凭据。
+可以通过 `VERSION`、`BUILD_NUMBER`、`OUT_DIR` 调整构建版本和输出目录；`SIGNING_IDENTITY` 默认为 ad-hoc。指定 Developer ID 身份时会启用 hardened runtime 和安全时间戳。设置 `NOTARIZE=1` 并提供 `APPLE_ID`、`APPLE_TEAM_ID`、`APPLE_APP_PASSWORD` 后，脚本会公证应用、附加公证票据、验证 Gatekeeper，再重新生成 ZIP；DMG 也会签名、公证和附加票据。公证失败会停止打包。
 
 ## GitHub Actions
 
@@ -70,3 +84,18 @@ git push origin v1.0.0
 ```
 
 无 Developer ID 证书也能生成安装包；签名与权限说明见上方安装步骤。
+
+### 配置正式签名与公证
+
+在仓库的 Settings → Secrets and variables → Actions 配置以下 Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12_BASE64` | 含私钥的 Developer ID Application `.p12` 证书，经过 Base64 编码 |
+| `MACOS_CERTIFICATE_PASSWORD` | `.p12` 的导出密码 |
+| `MACOS_SIGNING_IDENTITY` | 完整身份名称，例如 `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | Apple 开发者账号邮箱 |
+| `APPLE_TEAM_ID` | 开发者团队 ID |
+| `APPLE_APP_PASSWORD` | Apple 账号生成的应用专用密码 |
+
+需要 Apple Developer Program 的 Developer ID Application 证书；Apple Development 证书不能用于此分发公证。配置后重新运行流水线或发布新版本，旧下载包不会自动变成已公证包。PR 构建保持 ad-hoc；未配置证书时流水线会明确警告，配置了证书但缺少其他凭据时会失败，避免静默回退。证书导入临时钥匙串，任务结束时清理。

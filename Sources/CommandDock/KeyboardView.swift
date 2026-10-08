@@ -12,16 +12,18 @@ struct KeyboardView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                Image(systemName: "command.square.fill").font(.system(size: 29)).foregroundColor(.mint)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("CommandDock").font(.system(size: 20, weight: .semibold, design: .rounded))
-                    Text("按键启动 · 点按即达").font(.system(size: 11)).foregroundColor(.secondary)
-                }
+                Image(systemName: "command").font(.system(size: 20, weight: .medium)).foregroundColor(.mint)
+                Text("CommandDock").font(.system(size: 16, weight: .semibold, design: .rounded))
                 Spacer()
-                Label("单击 ⌘ 呼出", systemImage: "keyboard").font(.system(size: 12)).foregroundColor(.secondary)
-                Button(action: settings) { Image(systemName: "slider.horizontal.3") }.buttonStyle(.plain).padding(8).help("应用绑定与设置")
-                Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.plain).padding(8).help("关闭浮窗")
-            }.padding(.bottom, 2)
+                if store.paused || !store.listenerReady {
+                    Label(store.paused ? "监听已暂停" : "需要辅助功能权限", systemImage: "exclamationmark.circle")
+                        .font(.system(size: 12)).foregroundColor(.orange)
+                }
+                Button(action: settings) { Image(systemName: "slider.horizontal.3").frame(width: 32, height: 32) }
+                    .buttonStyle(.plain).help("应用绑定与设置").accessibilityLabel("应用绑定与设置")
+                Button(action: dismiss) { Image(systemName: "xmark").frame(width: 32, height: 32) }
+                    .buttonStyle(.plain).help("关闭浮窗").accessibilityLabel("关闭浮窗")
+            }.frame(height: 32).padding(.bottom, 2)
             HStack(spacing: gap) {
                 Button(action: dismiss) { Text("esc").frame(width: 60, height: 28) }.buttonStyle(KeycapStyle())
                 ForEach(1...12, id: \.self) { n in
@@ -56,14 +58,9 @@ struct KeyboardView: View {
                         .background(Color.primary.opacity(0.04)).cornerRadius(8)
                 }
             }
-            HStack {
-                Circle().fill(store.listenerReady && !store.paused ? Color.mint : Color.orange).frame(width: 5, height: 5)
-                Text(store.paused ? "监听已暂停" : store.listenerReady ? "就绪" : "请在设置中启用辅助功能权限")
-                Spacer()
-                Text("Esc 关闭  ·  ⌘ 再次关闭  ·  组合快捷键直接交给系统")
-            }.font(.system(size: 10)).foregroundColor(.secondary)
         }
-        .padding(24)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
         .frame(width: 999)
     }
     @ViewBuilder private func keycap(_ key: KeyboardKey, height: CGFloat = 66) -> some View {
@@ -86,6 +83,7 @@ struct KeyboardView: View {
                     }
                 }.padding(7).frame(width: width(key.width), height: height)
             }.buttonStyle(KeycapStyle(bound: binding != nil))
+                .disabled(binding == nil)
                 .help(binding.map { "\(key.label) · \($0.name)" } ?? "\(key.label) 尚未绑定，在设置中添加应用")
                 .accessibilityLabel(binding.map { "\(key.label)，打开\($0.name)" } ?? "\(key.label)，未绑定")
         }
@@ -105,7 +103,7 @@ private struct KeycapStyle: ButtonStyle {
         configuration.label
             .background(configuration.isPressed ? Color.mint.opacity(0.22) : Color.primary.opacity(bound ? 0.085 : 0.04))
             .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(bound ? 0.12 : 0.045), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(bound ? 0.12 : 0.045), lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 8))
     }
 }

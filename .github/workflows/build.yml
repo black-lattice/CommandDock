@@ -29,14 +29,52 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Configure Developer ID signing and notarization
+        if: github.event_name != 'pull_request'
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [[ -z "$CERTIFICATE" ]]; then
+            echo '::warning::未配置 Developer ID 证书，产物未公证，首次打开须在系统设置中允许。'
+            exit 0
+          fi
+          : "${CERTIFICATE_PASSWORD:?}" "${SIGNING_IDENTITY:?}" "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}" "${APPLE_APP_PASSWORD:?}"
+          [[ "$SIGNING_IDENTITY" == "Developer ID Application:"* ]] || exit 1
+          KEYCHAIN="$RUNNER_TEMP/commanddock-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/commanddock-signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/commanddock-signing.p12" -P "$CERTIFICATE_PASSWORD" -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo 'NOTARIZE=1' >> "$GITHUB_ENV"
       - name: Build Intel and Apple Silicon application
         env:
           BUILD_NUMBER: ${{ github.run_number }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           VERSION=1.0.1
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
           export VERSION
           ./scripts/build.sh
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/commanddock-signing.keychain-db" ]]; then
+            security delete-keychain "$RUNNER_TEMP/commanddock-signing.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/commanddock-signing.p12"
       - name: Upload installation files
         uses: actions/upload-artifact@v4
         with:
@@ -65,4 +103,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" release/* --verify-tag --title "CommandDock $RELEASE_TAG" --notes "原生 macOS 键盘应用启动器。支持 Intel 和 Apple Silicon，要求 macOS 13 或更新版本。下载 DMG 后将应用拖入 Applications。此版本采用 ad-hoc 签名，未经过 Apple 公证；首次启动请按 README 的安装说明操作。"
+          gh release create "$RELEASE_TAG" release/* --verify-tag --title "CommandDock $RELEASE_TAG" --notes "原生 macOS 键盘应用启动器。支持 Intel 和 Apple Silicon，要求 macOS 13 或更新版本。下载 DMG 后将应用拖入 Applications。签名与公证取决于仓库证书配置；首次启动及故障处理请按 README 的安装说明操作。"
