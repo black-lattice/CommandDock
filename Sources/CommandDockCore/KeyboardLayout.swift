@@ -24,15 +24,6 @@ public enum KeyboardLayout {
     public static func key(code: UInt16) -> KeyboardKey? { bindable.first { $0.code == code } }
 }
 
-public struct AppBinding: Codable, Equatable {
-    public var bundleIdentifier: String?
-    public var path: String
-    public var name: String
-    public init(bundleIdentifier: String?, path: String, name: String) {
-        self.bundleIdentifier = bundleIdentifier; self.path = path; self.name = name
-    }
-}
-
 public enum BindingCodec {
     public static func decode(_ data: Data) throws -> [UInt16: AppBinding] {
         let raw = try JSONDecoder().decode([String: AppBinding].self, from: data)

@@ -70,7 +70,7 @@ struct KeyboardView: View {
                 }.padding(7).frame(width: width(key.width), height: height)
             }.buttonStyle(KeycapStyle(bound: binding != nil))
                 .disabled(binding == nil)
-                .help(binding.map { "\(key.label) · \($0.name)" } ?? "\(key.label) 尚未绑定，在设置中添加应用")
+                .help(binding.map { "\(key.label) · \($0.name)" } ?? "\(key.label) 尚未绑定，在设置中添加绑定")
                 .accessibilityLabel(binding.map { "\(key.label)，打开\($0.name)" } ?? "\(key.label)，未绑定")
         }
     }

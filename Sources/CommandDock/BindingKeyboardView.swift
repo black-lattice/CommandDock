@@ -3,6 +3,8 @@ import CommandDockCore
 
 struct BindingKeyboardView: View {
     @ObservedObject var store: AppStore
+    @State private var targetedKey: UInt16?
+    @State private var editingKey: KeyboardKey?
     @State private var hoveredKey: UInt16?
     @State private var removalKey: KeyboardKey?
     @State private var confirmRemoval = false
@@ -35,6 +37,7 @@ struct BindingKeyboardView: View {
                 }
             }
         }.frame(maxWidth: .infinity)
+        .sheet(item: $editingKey) { key in BindingEditor(store: store, key: key) }
         .alert("清除绑定？", isPresented: $confirmRemoval, presenting: removalKey) { key in
             Button("取消", role: .cancel) {}
             Button("清除", role: .destructive) { store.set(nil, for: key.code) }
@@ -45,11 +48,11 @@ struct BindingKeyboardView: View {
 
     private func keycap(_ key: KeyboardKey, height: CGFloat = 66) -> some View {
         let binding = store.binding(for: key.code)
-        let hovered = hoveredKey == key.code
+        let hovered = hoveredKey == key.code || targetedKey == key.code
         let missing = binding.map { store.url(for: $0) == nil } ?? false
         return ZStack(alignment: .topTrailing) {
             Button {
-                store.chooseApplication(for: key)
+                editingKey = key
             } label: {
                 VStack(spacing: 2) {
                     Text(key.label).font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -69,8 +72,8 @@ struct BindingKeyboardView: View {
                 }.padding(7).frame(width: width(key.width), height: height)
             }
             .buttonStyle(BindingKeyStyle(hovered: hovered, bound: binding != nil))
-            .help(binding.map { "\(key.label) → \($0.name)\n\(missing ? "此电脑未安装该应用" : $0.bundleIdentifier ?? $0.path)" } ?? "点击为 \(key.label) 选择应用")
-            .accessibilityLabel(binding.map { "\(key.label)，已绑定\($0.name)，点击更换应用" } ?? "\(key.label)，未绑定，点击选择应用")
+            .help(binding.map { "\(key.label) → \($0.name)\n\(missing ? "此电脑无法找到目标" : $0.bundleIdentifier ?? $0.path)" } ?? "点击为 \(key.label) 设置绑定")
+            .accessibilityLabel(binding.map { "\(key.label)，已绑定\($0.name)，点击编辑绑定" } ?? "\(key.label)，未绑定，点击设置绑定")
             if binding != nil {
                 Button {
                     removalKey = key
@@ -87,6 +90,14 @@ struct BindingKeyboardView: View {
                 .accessibilityHidden(!hovered)
                 .help("清除 \(key.label) 的绑定")
                 .accessibilityLabel("清除 \(key.label) 的绑定")
+            }
+        }
+        .onDrag { BindingDrop.provider(for: key.code, bound: binding != nil) }
+        .onDrop(of: BindingDrop.types, delegate: BindingDrop(store: store, code: key.code, targeted: $targetedKey))
+        .contextMenu {
+            Button("编辑绑定…") { editingKey = key }
+            if binding != nil {
+                Button("清除绑定…") { removalKey = key; confirmRemoval = true }
             }
         }
         .onHover { inside in

@@ -10,6 +10,11 @@ final class EventListener {
     private(set) var failureReason = ""
     private var recognizer = CommandTapRecognizer()
     private var router = OverlayKeyRouter()
+    private var triggerMatcher = TriggerMatcher()
+    private var shortcutModifiersHeld = false
+    private var dismissedForModifiers = false
+    var triggerMode: () -> TriggerMode = { .eitherCommand }
+    var customHotKey: () -> CustomHotKey = { CustomHotKey() }
     private var draining = false
     private var hasWorkingTap: Bool { tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false }
     var enabled: () -> Bool = { true }
@@ -82,6 +87,9 @@ final class EventListener {
         if !force && visible() { installFallbackMouseMonitor() }
     }
     func resetGesture() {
+        triggerMatcher.reset()
+        shortcutModifiersHeld = false
+        dismissedForModifiers = false
         let keys = Set((0..<128).map(UInt16.init).filter { CGEventSource.keyState(.combinedSessionState, key: $0) })
         let buttons = Set((0..<32).filter { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: UInt32($0))!) })
         recognizer.reset(heldKeys: keys, heldMouseButtons: buttons)
@@ -195,24 +203,42 @@ final class EventListener {
         switch type {
         case .flagsChanged:
             recognizer.maximumDuration = maximumDuration()
-            let trigger = recognizer.flagsChanged(keyCode: code, modifiers: flags,
-                                                  time: Double(event.timestamp) / 1_000_000_000)
+            let time = Double(event.timestamp) / 1_000_000_000
+            let tap = recognizer.flagsChanged(keyCode: code, modifiers: flags, time: time)
+            if !flags.subtracting(.command).isEmpty || (flags.isEmpty && !tap) { triggerMatcher.reset() }
+            if shortcutModifiersHeld {
+                if flags.isEmpty { shortcutModifiersHeld = false }
+                recognizer.cancel()
+                return Unmanaged.passUnretained(event)
+            }
             if active() && !flags.isEmpty {
                 recognizer.cancel()
+                triggerMatcher.reset()
+                dismissedForModifiers = true
                 dismiss()
-            } else if trigger && enabled() {
+            } else if tap && enabled() && triggerMatcher.acceptTap(code: code, time: time, mode: triggerMode()) {
                 // Arm synchronously so a following fast keyDown is never lost.
                 // The delegate defers window presentation until after this event.
                 toggle()
             }
-            if !enabled() { recognizer.cancel() }
+            if flags.isEmpty { dismissedForModifiers = false }
+            if !enabled() { recognizer.cancel(); triggerMatcher.reset() }
         case .keyDown:
+            triggerMatcher.reset()
             recognizer.keyDown(code)
+            let repeatKey = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            if enabled(), triggerMode() == .shortcut, customHotKey().matches(code: code, modifiers: flags), !repeatKey {
+                router.consume(code)
+                shortcutModifiersHeld = true
+                if !dismissedForModifiers { toggle() }
+                return nil
+            }
             // Previously swallowed keys still own their repeats/releases even
             // after the session ends or triggering is temporarily disabled.
             if routeKey(code: code, modifiers: flags,
                 repeatKey: event.getIntegerValueField(.keyboardEventAutorepeat) != 0) { return nil }
         case .leftMouseDown,.rightMouseDown,.otherMouseDown:
+            triggerMatcher.reset()
             recognizer.mouseDown(Int(event.getIntegerValueField(.mouseEventButtonNumber)))
             if active() && (!visible() || !overlayContains(event.location)) { outsideClick() }
         case .leftMouseUp,.rightMouseUp,.otherMouseUp:

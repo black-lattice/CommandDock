@@ -135,4 +135,57 @@ final class EventListenerTests: XCTestCase {
         XCTAssertTrue(listener.handle(.leftMouseDown, event) != nil)
         XCTAssertFalse(active)
     }
+    func testCustomShortcutConsumesRepeatAndReleaseAndWaitsForModifierRelease() {
+        let listener = EventListener()
+        listener.triggerMode = { .shortcut }
+        var active = false
+        var toggles = 0
+        listener.active = { active }
+        listener.toggle = { active.toggle(); toggles += 1 }
+        listener.dismiss = { active = false }
+        _ = listener.handle(.flagsChanged, flags(59, modifiers: .maskControl, at: 1))
+        _ = listener.handle(.flagsChanged, flags(58, modifiers: [.maskControl, .maskAlternate], at: 1.1))
+        XCTAssertNil(listener.handle(.keyDown, key(49, modifiers: [.maskControl, .maskAlternate])))
+        XCTAssertTrue(active)
+        XCTAssertNil(listener.handle(.keyDown, key(49, modifiers: [.maskControl, .maskAlternate], repeatKey: true)))
+        XCTAssertNil(listener.handle(.keyUp, key(49, down: false, modifiers: [.maskControl, .maskAlternate])))
+        _ = listener.handle(.flagsChanged, flags(58, modifiers: .maskControl, at: 1.2))
+        XCTAssertTrue(active)
+        _ = listener.handle(.flagsChanged, flags(59, modifiers: [], at: 1.3))
+        XCTAssertTrue(active)
+        XCTAssertEqual(toggles, 1)
+        // Using the same shortcut again dismisses, without reopening on keyDown.
+        _ = listener.handle(.flagsChanged, flags(59, modifiers: .maskControl, at: 2))
+        _ = listener.handle(.flagsChanged, flags(58, modifiers: [.maskControl, .maskAlternate], at: 2.1))
+        XCTAssertNil(listener.handle(.keyDown, key(49, modifiers: [.maskControl, .maskAlternate])))
+        XCTAssertFalse(active)
+        XCTAssertEqual(toggles, 1)
+    }
+
+    func testDisabledTriggerPassesCustomShortcutThrough() {
+        let listener = EventListener()
+        listener.triggerMode = { .shortcut }
+        listener.enabled = { false }
+        listener.toggle = { XCTFail("Excluded application must not trigger") }
+        XCTAssertTrue(listener.handle(.keyDown, key(49, modifiers: [.maskControl, .maskAlternate])) != nil)
+        XCTAssertTrue(listener.handle(.keyUp, key(49, down: false)) != nil)
+    }
+
+    func testTypingBetweenCommandTapsCancelsDoubleTap() {
+        let listener = EventListener()
+        listener.triggerMode = { .doubleCommand }
+        var toggles = 0
+        listener.toggle = { toggles += 1 }
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 1))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 1.05))
+        _ = listener.handle(.keyDown, key(12))
+        _ = listener.handle(.keyUp, key(12, down: false))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 1.1))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 1.15))
+        XCTAssertEqual(toggles, 0)
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 1.2))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 1.25))
+        XCTAssertEqual(toggles, 1)
+    }
+
 }

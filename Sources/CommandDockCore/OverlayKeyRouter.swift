@@ -26,6 +26,7 @@ public struct OverlayKeyRouter {
     public mutating func reconcileHeldKeys(_ isDown: (UInt16) -> Bool) {
         consumed = consumed.filter(isDown)
     }
+    public mutating func consume(_ code: UInt16) { consumed.insert(code) }
     public mutating func reset() { consumed.removeAll() }
     public mutating func keyUp(code: UInt16) -> OverlayKeyAction {
         consumed.remove(code) != nil ? .consume : .passThrough

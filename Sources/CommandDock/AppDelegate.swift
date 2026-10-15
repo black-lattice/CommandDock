@@ -4,11 +4,6 @@ import Combine
 import ApplicationServices
 import CommandDockCore
 
-private final class LauncherPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let store = AppStore()
     private let listener = EventListener()
@@ -35,8 +30,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupMenu()
         listener.enabled = { [weak self] in
             guard let self = self else { return false }
-            return !self.store.paused && self.settingsWindow?.isKeyWindow != true && !self.showingError
+            return !self.store.paused && self.store.autoPausedAppName == nil && self.settingsWindow?.isKeyWindow != true && self.settingsWindow?.attachedSheet == nil && !self.showingError
         }
+        listener.triggerMode = { [weak self] in self?.store.triggerMode ?? .eitherCommand }
+        listener.customHotKey = { [weak self] in self?.store.customHotKey ?? CustomHotKey() }
+        store.$triggerMode.dropFirst().sink { [weak self] _ in
+            self?.listener.resetGesture(); self?.hideOverlay()
+        }.store(in: &subscriptions)
+        store.$customHotKey.dropFirst().sink { [weak self] _ in
+            self?.listener.resetGesture(); self?.hideOverlay()
+        }.store(in: &subscriptions)
         listener.active = { [weak self] in self?.session.isActive == true }
         listener.reveal = { [weak self] in self?.schedulePresentation(delay: 0) }
         listener.visible = { [weak self] in self?.overlay?.isVisible == true }
@@ -78,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self = self else { return }
+            self.store.updateFrontApplication(NSWorkspace.shared.frontmostApplication)
+            self.listener.resetGesture()
             if let app = NSWorkspace.shared.frontmostApplication, self.session.isActive,
                app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
                app.processIdentifier != self.overlayApplication?.processIdentifier {
@@ -93,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.hideOverlay(restoreFocus: false)
         })
+        store.updateFrontApplication(NSWorkspace.shared.frontmostApplication)
         connectListener()
         if !UserDefaults.standard.bool(forKey: "hasLaunched") || !store.listenerReady {
             UserDefaults.standard.set(true, forKey: "hasLaunched")
@@ -132,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let title = NSMenuItem(title: "CommandDock", action: nil, keyEquivalent: "")
         title.isEnabled = false; menu.addItem(title)
         addItem("显示浮窗", action: #selector(showFromMenu), to: menu)
-        addItem("应用绑定与设置…", action: #selector(showSettings), to: menu)
+        addItem("按键绑定与设置…", action: #selector(showSettings), to: menu)
         menu.addItem(.separator())
         addItem("暂停 / 恢复监听", action: #selector(togglePause), to: menu)
         addItem("重新连接键盘监听", action: #selector(reconnect), to: menu)
@@ -191,43 +197,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
     private func launch(_ code: UInt16) {
+        let foreground = overlayApplication
         hideOverlay(restoreFocus: false, launched: true)
         // Application lookup and launch stay outside Quartz's event callback.
-        DispatchQueue.main.async { [weak self] in self?.store.launch(code) }
-    }
-    private func makeOverlay() -> LauncherPanel {
-        let root = KeyboardView(store: store, launch: { [weak self] code in
-            self?.launch(code)
-        }, dismiss: { [weak self] in self?.hideOverlay() })
-        let hosting = NSHostingView(rootView: root)
-        let size = hosting.fittingSize
-        let panel = LauncherPanel(contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless,.nonactivatingPanel], backing: .buffered, defer: false)
-        panel.level = .floating
-        panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.transient,.ignoresCycle]
-        panel.isReleasedWhenClosed = false
-        panel.delegate = self
-        // Clip the material and hosting view together; backdrop layers can extend
-        // beyond the visual effect view's own rounded layer.
-        let content = NSView(frame: NSRect(origin: .zero, size: size))
-        content.wantsLayer = true
-        content.layer?.cornerRadius = 18; content.layer?.masksToBounds = true
-        let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
-        background.material = .hudWindow; background.blendingMode = .behindWindow; background.state = .active
-        background.maskImage = NSImage(size: size, flipped: false) { rect in
-            NSColor.white.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18).fill()
-            return true
-        }
-        background.autoresizingMask = [.width,.height]
-        hosting.frame = content.bounds; hosting.autoresizingMask = [.width,.height]
-        content.addSubview(background); content.addSubview(hosting); panel.contentView = content
-        return panel
+        DispatchQueue.main.async { [weak self] in self?.store.launch(code, foregroundApplication: foreground) }
     }
     private func showOverlay() {
-        if overlay == nil { overlay = makeOverlay() }
+        if overlay == nil {
+            overlay = LauncherPanel.make(store: store, delegate: self,
+                launch: { [weak self] in self?.launch($0) }, dismiss: { [weak self] in self?.hideOverlay() })
+        }
         guard let overlay = overlay,
               let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else {
             hideOverlay(restoreFocus: false)

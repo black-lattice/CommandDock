@@ -8,6 +8,20 @@ final class AppStore: ObservableObject {
     @Published var listenerReady = false
     @Published var listenerMessage = ""
     @Published var paused = false
+    @Published var autoPausedAppName: String?
+    @Published var pausedApplications: [PausedApplication] {
+        didSet {
+            defaults.set(try? JSONEncoder().encode(pausedApplications), forKey: "pausedApplications")
+            updateFrontApplication(NSWorkspace.shared.frontmostApplication)
+        }
+    }
+    private var lastExternalApplication: (identifier: String?, path: String?)?
+    @Published var triggerMode: TriggerMode {
+        didSet { defaults.set(triggerMode.rawValue, forKey: "triggerMode") }
+    }
+    @Published var customHotKey: CustomHotKey {
+        didSet { defaults.set(try? JSONEncoder().encode(customHotKey), forKey: "customHotKey") }
+    }
     @Published var blindLaunchEnabled: Bool {
         didSet { defaults.set(blindLaunchEnabled, forKey: "blindLaunchEnabled") }
     }
@@ -17,17 +31,23 @@ final class AppStore: ObservableObject {
     @Published var experiment = LauncherExperiment()
     @Published var errorMessage: String?
     @Published var tapDuration: Double {
-        didSet { UserDefaults.standard.set(tapDuration, forKey: "tapDuration") }
+        didSet { defaults.set(tapDuration, forKey: "tapDuration") }
     }
     private var iconCache: [String: NSImage] = [:]
     private var applicationURLs = ApplicationURLCache()
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
-    init() {
-        blindLaunchEnabled = UserDefaults.standard.bool(forKey: "blindLaunchEnabled")
-        let delay = UserDefaults.standard.object(forKey: "hintDelay") as? Double ?? 0.25
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        pausedApplications = defaults.data(forKey: "pausedApplications")
+            .flatMap { try? JSONDecoder().decode([PausedApplication].self, from: $0) } ?? []
+        triggerMode = TriggerMode(rawValue: defaults.string(forKey: "triggerMode") ?? "") ?? .eitherCommand
+        customHotKey = defaults.data(forKey: "customHotKey")
+            .flatMap { try? JSONDecoder().decode(CustomHotKey.self, from: $0) } ?? CustomHotKey()
+        blindLaunchEnabled = defaults.bool(forKey: "blindLaunchEnabled")
+        let delay = defaults.object(forKey: "hintDelay") as? Double ?? 0.25
         hintDelay = delay.isFinite ? min(max(delay, 0.1), 0.6) : 0.25
-        let savedDuration = UserDefaults.standard.double(forKey: "tapDuration")
+        let savedDuration = defaults.double(forKey: "tapDuration")
         tapDuration = savedDuration.isFinite && savedDuration > 0 ? min(max(savedDuration, 0.2), 0.8) : 0.5
         if let data = defaults.data(forKey: "bindings") {
             do { bindings = try BindingCodec.decode(data) }
@@ -37,12 +57,29 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func updateFrontApplication(_ application: NSRunningApplication?) {
+        updateFrontApplication(identifier: application?.bundleIdentifier, path: application?.bundleURL?.path,
+            processIdentifier: application?.processIdentifier ?? ProcessInfo.processInfo.processIdentifier)
+    }
+    func updateFrontApplication(identifier: String?, path: String?, processIdentifier: pid_t) {
+        if processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            lastExternalApplication = (identifier, path)
+        }
+        let name = lastExternalApplication.flatMap { app in
+            pausedApplications.first(where: { $0.matches(identifier: app.identifier, path: app.path) })?.name
+        }
+        if autoPausedAppName != name { autoPausedAppName = name }
+    }
     func binding(for code: UInt16) -> AppBinding? { bindings[code] }
     func url(for binding: AppBinding, refresh: Bool = false) -> URL? {
-        applicationURLs.url(for: binding, refresh: refresh) { binding in
-            if let identifier = binding.bundleIdentifier,
+        if binding.kind == .shortcut { return binding.shortcutURL }
+        if binding.kind == .website { return AppBinding.websiteURL(binding.path) }
+        return applicationURLs.url(for: binding, refresh: refresh) { binding in
+            if binding.kind == .application, let identifier = binding.bundleIdentifier,
                let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) { return url }
+            guard binding.path.hasPrefix("/") else { return nil }
             let url = URL(fileURLWithPath: binding.path)
+            if binding.kind == .application && (url.pathExtension.lowercased() != "app" || Bundle(url: url) == nil) { return nil }
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
     }
@@ -52,46 +89,33 @@ final class AppStore: ObservableObject {
         objectWillChange.send()
     }
     func icon(for binding: AppBinding) -> NSImage {
-        let key = binding.bundleIdentifier ?? binding.path
+        let key = binding.kind.rawValue + ":" + (binding.bundleIdentifier ?? binding.path)
         if let cached = iconCache[key] { return cached }
-        let image = url(for: binding).map { NSWorkspace.shared.icon(forFile: $0.path) }
-            ?? NSImage(systemSymbolName: "questionmark.app", accessibilityDescription: "应用未安装")!
+        let image: NSImage
+        switch binding.kind {
+        case .website: image = NSImage(systemSymbolName: "globe", accessibilityDescription: "网址")!
+        case .shortcut: image = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "快捷指令")!
+        default:
+            image = url(for: binding).map { NSWorkspace.shared.icon(forFile: $0.path) }
+                ?? NSImage(systemSymbolName: "questionmark.app", accessibilityDescription: "目标不存在")!
+        }
         image.size = NSSize(width: 28, height: 28)
         iconCache[key] = image
         return image
-    }
-    func chooseApplication(for key: KeyboardKey) {
-        let picker = NSOpenPanel()
-        picker.title = "为 \(key.label) 绑定应用"
-        picker.message = "选择一个 .app 应用。可以前往「应用程序」或其他目录。"
-        picker.directoryURL = URL(fileURLWithPath: "/Applications")
-        picker.canChooseDirectories = false
-        picker.canChooseFiles = true
-        picker.allowsMultipleSelection = false
-        picker.allowedContentTypes = [.applicationBundle]
-        guard picker.runModal() == .OK, let url = picker.url else { return }
-        guard let bundle = Bundle(url: url), url.pathExtension == "app" else {
-            errorMessage = "请选择有效的 macOS 应用。"; return
-        }
-        set(AppBinding(bundleIdentifier: bundle.bundleIdentifier, path: url.path,
-                       name: FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")), for: key.code)
     }
     func set(_ binding: AppBinding?, for code: UInt16) {
         bindings[code] = binding
         refreshApplicationCache()
         persist()
     }
-    func launch(_ code: UInt16) {
-        guard let binding = bindings[code] else { return }
-        guard let url = url(for: binding, refresh: true) else {
-            errorMessage = "未找到「\(binding.name)」。请先安装应用，或在设置中重新绑定。"; return
-        }
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, error in
-            guard let error = error else { return }
-            DispatchQueue.main.async { self?.errorMessage = "无法打开「\(binding.name)」：\(error.localizedDescription)" }
-        }
+    func swapBindings(_ first: UInt16, _ second: UInt16) {
+        guard first != second, KeyboardLayout.key(code: first) != nil,
+              KeyboardLayout.key(code: second) != nil, bindings[first] != nil else { return }
+        let original = bindings[first]
+        bindings[first] = bindings[second]
+        bindings[second] = original
+        refreshApplicationCache()
+        persist()
     }
     func installDefaults() {
         let identifiers: [(UInt16, String)] = [

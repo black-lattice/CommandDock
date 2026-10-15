@@ -16,11 +16,11 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             general.tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
-            bindings.tabItem { Label("应用绑定", systemImage: "keyboard") }.tag(1)
-        }.padding(12).frame(width: 1039, height: selectedTab == 1 ? 440 : 540)
+            bindings.tabItem { Label("按键绑定", systemImage: "keyboard") }.tag(1)
+        }.padding(12).frame(width: 1039, height: selectedTab == 1 ? 470 : 540)
         .onChange(of: selectedTab) { tab in
             if tab == 1 { store.refreshApplicationCache() }
-            resizeWindow(CGSize(width: 1039, height: tab == 1 ? 440 : 540))
+            resizeWindow(CGSize(width: 1039, height: tab == 1 ? 470 : 540))
         }
         .alert("恢复默认绑定？", isPresented: $resetConfirm) {
             Button("取消", role: .cancel) {}
@@ -30,15 +30,15 @@ struct SettingsView: View {
     private var general: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("轻按 Command，打开你的应用").font(.title2).fontWeight(.semibold)
-                Text("单独按下并松开任意一侧 ⌘，浮窗会保持显示。按应用对应的物理按键或点击图标即可启动；Esc、再次单击 ⌘ 或点击外部关闭浮窗。")
+                Text("轻按按键，直达常用操作").font(.title2).fontWeight(.semibold)
+                Text("使用下方配置的呼出方式，浮窗会保持显示。按对应物理键位或点击图标即可执行；Esc、按修饰键或点击外部关闭浮窗。")
                     .foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
                         Label(store.paused ? "全局键盘监听已暂停" : store.listenerReady ? "全局键盘监听已连接" : "全局键盘监听未连接",
                               systemImage: store.paused ? "pause.circle" : store.listenerReady ? "checkmark.circle.fill" : "lock.shield")
                             .foregroundColor(store.listenerReady ? .green : .orange)
-                        Text(store.paused ? "取消暂停后会重新连接全局快捷键；仍可通过菜单栏手动显示浮窗。" : store.listenerReady ? "全局 Command 触发已就绪。仅识别按键与修饰键，不记录输入内容，不上传数据。" : "单击 Command 呼出需要辅助功能授权；手动打开的浮窗仍可使用键盘。点击「启用全局快捷键」，按系统提示允许 CommandDock。")
+                        Text(store.paused ? "取消暂停后会重新连接全局快捷键；仍可通过菜单栏手动显示浮窗。" : store.listenerReady ? "全局触发已就绪。仅识别按键与修饰键，不记录输入内容，不上传数据。" : "单击 Command 呼出需要辅助功能授权；手动打开的浮窗仍可使用键盘。点击「启用全局快捷键」，按系统提示允许 CommandDock。")
                             .font(.callout).foregroundColor(.secondary)
                         if !store.listenerMessage.isEmpty {
                             Text(store.listenerMessage).font(.caption).foregroundColor(.orange)
@@ -50,7 +50,7 @@ struct SettingsView: View {
                         }
                     }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Toggle("暂停 Command 监听", isOn: $store.paused)
+                Toggle("暂停全局触发", isOn: $store.paused)
                 Toggle("登录时自动启动", isOn: $loginEnabled)
                     .onChange(of: loginEnabled) { enabled in
                         do {
@@ -63,6 +63,8 @@ struct SettingsView: View {
                         }
                     }
                 if let loginError = loginError { Text(loginError).font(.caption).foregroundColor(.orange) }
+                TriggerSettingsView(store: store)
+                ApplicationPauseSettings(store: store)
                 HStack {
                     Text("单击最长按住时间")
                     Slider(value: $store.tapDuration, in: 0.2...0.8, step: 0.1).frame(width: 160)
@@ -71,7 +73,7 @@ struct SettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("盲操作实验：延迟显示键盘提示", isOn: $store.blindLaunchEnabled)
-                        Text("松开 ⌘ 后立即接收绑定键，快速按键可直接启动应用。等待后才显示浮窗；未绑定键立即显示提示。菜单栏预览始终立即显示。")
+                        Text("呼出后立即接收绑定键，快速按键可直接执行操作。等待后才显示浮窗；未绑定键立即显示提示。菜单栏预览始终立即显示。")
                             .font(.caption).foregroundColor(.secondary)
                         if store.blindLaunchEnabled {
                             HStack {
@@ -84,7 +86,7 @@ struct SettingsView: View {
                             .font(.caption).foregroundColor(.secondary)
                         HStack {
                             if let average = store.experiment.averageResponseTime {
-                                Text(String(format: "从松开 ⌘ 到启动按键平均 %.0f 毫秒", average * 1000))
+                                Text(String(format: "从触发到操作按键平均 %.0f 毫秒", average * 1000))
                                     .font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
@@ -110,6 +112,8 @@ struct SettingsView: View {
     }
     private var bindings: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Text("点击键位编辑；拖入应用、文件、文件夹或网址即可绑定；拖动已绑定键位可交换或移动。")
+                .font(.caption).foregroundColor(.secondary)
             BindingKeyboardView(store: store)
             HStack {
                 Spacer()
