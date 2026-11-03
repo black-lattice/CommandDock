@@ -18,7 +18,7 @@ Show the keyboard and press a mapped key to open Music. Click the animation to v
 
 The launcher shows destinations at their physical key positions. Icons depend on your local bindings.
 
-![CommandDock launcher: MacBook keyboard layout with application bindings](docs/screenshots/launcher.jpg)
+![CommandDock launcher: MacBook keyboard layout with application bindings](docs/screenshots/launcher-desktop.jpg)
 
 <details>
 <summary>View key binding settings</summary>

@@ -18,7 +18,7 @@ CommandDock 是原生 macOS 键盘式快捷启动器。轻按并松开 Command�
 
 快捷启动浮窗按物理键位展示绑定目标，图标随本机配置变化。
 
-![CommandDock 快捷启动浮窗：MacBook 键盘布局与应用图标](docs/screenshots/launcher.jpg)
+![CommandDock 快捷启动浮窗：MacBook 键盘布局与应用图标](docs/screenshots/launcher-desktop.jpg)
 
 <details>
 <summary>查看按键绑定设置</summary>
