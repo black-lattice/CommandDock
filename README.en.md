@@ -6,6 +6,14 @@ CommandDock is a native macOS keyboard launcher. Tap and release Command to disp
 
 It is designed for Mac users who want familiar, fixed key positions for frequently used tools and destinations.
 
+## Demo
+
+Show the keyboard and press a mapped key to open Music. Click the animation to view the original-quality video.
+
+[![CommandDock demo: show the keyboard and open Music](docs/media/commanddock-demo.gif)](docs/media/commanddock-demo.mp4)
+
+[Watch the original-quality video (MP4)](docs/media/commanddock-demo.mp4)
+
 ## Screenshots
 
 The launcher shows destinations at their physical key positions. Icons depend on your local bindings.

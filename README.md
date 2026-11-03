@@ -6,6 +6,14 @@ CommandDock 是原生 macOS 键盘式快捷启动器。轻按并松开 Command�
 
 适合希望通过固定键位快速访问常用工具、减少反复查找和切换的 Mac 用户。
 
+## 操作演示
+
+呼出键盘，按已绑定的键位打开音乐应用。点击动图可查看原画质视频。
+
+[![CommandDock 操作演示：呼出键盘并打开音乐应用](docs/media/commanddock-demo.gif)](docs/media/commanddock-demo.mp4)
+
+[观看原画质视频（MP4）](docs/media/commanddock-demo.mp4)
+
 ## 界面预览
 
 快捷启动浮窗按物理键位展示绑定目标，图标随本机配置变化。
