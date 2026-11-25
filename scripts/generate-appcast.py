@@ -26,6 +26,8 @@ def main():
 
     with ZipFile(archive) as package:
         info = plistlib.loads(package.read("CommandDock.app/Contents/Info.plist"))
+    if not all(info.get(key) is True for key in ("SURequireSignedFeed", "SUVerifyUpdateBeforeExtraction")):
+        raise SystemExit("发布包必须同时启用 Sparkle 清单签名验证和解压前验证。")
     if info["SUPublicEDKey"] != (root / "scripts/sparkle-public-key.txt").read_text().strip():
         raise SystemExit("安装包内的更新公钥与仓库公钥不匹配。")
     if info["SUFeedURL"] != f"{release}/latest/download/appcast.xml":

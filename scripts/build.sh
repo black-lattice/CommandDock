@@ -51,6 +51,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 plutil -insert SUFeedURL -string "$SU_FEED_URL" "$APP/Contents/Info.plist"
 plutil -insert SURequireSignedFeed -bool YES "$APP/Contents/Info.plist"
+plutil -insert SUVerifyUpdateBeforeExtraction -bool YES "$APP/Contents/Info.plist"
 plutil -insert SUPublicEDKey -string "$SPARKLE_PUBLIC_KEY" "$APP/Contents/Info.plist"
 swift scripts/icon.swift "$APP/Contents/Resources"
 bash scripts/embed-sparkle.sh "$SPARKLE_ARTIFACT" "$APP" "$SIGNING_IDENTITY"
