@@ -48,6 +48,10 @@ CommandDock 是原生 macOS 键盘式快捷启动器。轻按并松开 Command�
 
 未经过 Apple 公证的安装包可能被系统拦截。确认来源后，可在「隐私与安全性」中使用「仍要打开」。
 
+从没有「检查更新…」菜单的版本升级时，退出 CommandDock，把新版拖到「应用程序」并选择「替换」。之后可从菜单栏 `⌘ → 检查更新…` 下载并安装新版。Sparkle 会验证更新包的签名，已有按键绑定保存在本机。
+
+发布者首次启用更新时，需在仓库的 GitHub Actions Secrets 中配置 `SPARKLE_PRIVATE_KEY`，使用与 `scripts/sparkle-public-key.txt` 配对的 Sparkle 私钥（Base64）。本项目在 macOS 钥匙串中使用账户 `yunfenggroup.CommandDock`。发布带 `v` 前缀的版本标签时，工作流会将签名更新清单 `appcast.xml` 与安装包一起上传到 GitHub Releases。
+
 ## 开始使用
 
 1. 在菜单栏 `⌘` 图标中打开「应用绑定与设置」，进入「按键绑定」。

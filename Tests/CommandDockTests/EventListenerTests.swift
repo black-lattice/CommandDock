@@ -87,6 +87,45 @@ final class EventListenerTests: XCTestCase {
         XCTAssertFalse(session.reveal(token: token))
     }
 
+    func testCommandTapRecoversFromMissedReleasesButStillRejectsHeldInputs() {
+        var heldKeys: Set<UInt16> = [12]
+        var heldButtons: Set<Int> = [0]
+        let listener = EventListener(keyIsDown: { heldKeys.contains($0) }, mouseButtonIsDown: { heldButtons.contains($0) })
+        var toggles = 0
+        listener.toggle = { toggles += 1 }
+        _ = listener.handle(.keyDown, key(12))
+        let mouseDown = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: .zero, mouseButton: .left)!
+        _ = listener.handle(.leftMouseDown, mouseDown)
+
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 1))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 1.1))
+        XCTAssertEqual(toggles, 0)
+
+        heldButtons.removeAll()
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 2))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 2.1))
+        XCTAssertEqual(toggles, 0)
+
+        heldKeys.removeAll()
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 3))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 3.1))
+        XCTAssertEqual(toggles, 1)
+    }
+
+    func testResetWhileCommandIsHeldDoesNotBlockTheNextCommandTap() {
+        let listener = EventListener(keyIsDown: { $0 == 55 }, mouseButtonIsDown: { _ in false })
+        var toggles = 0
+        listener.toggle = { toggles += 1 }
+
+        listener.resetGesture()
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 1))
+        XCTAssertEqual(toggles, 0)
+
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: .maskCommand, at: 2))
+        _ = listener.handle(.flagsChanged, flags(55, modifiers: [], at: 2.1))
+        XCTAssertEqual(toggles, 1)
+    }
+
     func testPendingSessionCancelsOnModifierAndDoesNotReopenOnRelease() {
         let listener = EventListener()
         var active = true

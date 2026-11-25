@@ -48,6 +48,10 @@ The launcher shows destinations at their physical key positions. Icons depend on
 
 macOS may block builds without Apple notarization. After verifying the source, use Open Anyway in Privacy & Security.
 
+To upgrade from a version without Check for Updates, quit CommandDock and replace the app in Applications once. For later updates, choose **检查更新… (Check for Updates)** from the `⌘` menu. Sparkle verifies the update signature before installation. Your key bindings are stored locally.
+
+Before the first release with updates, set the GitHub Actions secret `SPARKLE_PRIVATE_KEY` to the Base64 Sparkle private key matching `scripts/sparkle-public-key.txt`. The macOS Keychain account for this project is `yunfenggroup.CommandDock`. Publishing a version tag starting with `v` uploads the signed update information in `appcast.xml` alongside the installers on GitHub Releases.
+
 ## Get started
 
 1. Open the app's settings from its `⌘` menu bar icon and select Key Bindings (按键绑定).

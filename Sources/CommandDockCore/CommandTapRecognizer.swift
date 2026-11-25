@@ -35,6 +35,11 @@ public struct CommandTapRecognizer {
     public mutating func mouseDown(_ button: Int) { heldMouseButtons.insert(button); cancel() }
     public mutating func mouseUp(_ button: Int) { heldMouseButtons.remove(button) }
 
+    public mutating func reconcileHeldInputs(keyIsDown: (UInt16) -> Bool, mouseButtonIsDown: (Int) -> Bool) {
+        heldKeys = heldKeys.filter(keyIsDown)
+        heldMouseButtons = heldMouseButtons.filter(mouseButtonIsDown)
+    }
+
     public mutating func flagsChanged(keyCode: UInt16, modifiers: KeyModifiers, time: TimeInterval) -> Bool {
         let commandIsDown = modifiers.contains(.command)
         let isCommandKey = keyCode == 54 || keyCode == 55

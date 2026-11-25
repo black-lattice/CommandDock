@@ -13,6 +13,8 @@ final class EventListener {
     private var triggerMatcher = TriggerMatcher()
     private var shortcutModifiersHeld = false
     private var dismissedForModifiers = false
+    private let keyIsDown: (UInt16) -> Bool
+    private let mouseButtonIsDown: (Int) -> Bool
     var triggerMode: () -> TriggerMode = { .eitherCommand }
     var customHotKey: () -> CustomHotKey = { CustomHotKey() }
     private var draining = false
@@ -30,11 +32,22 @@ final class EventListener {
     var launch: (UInt16) -> Void = { _ in }
     var failed: () -> Void = {}
 
+    init(
+        keyIsDown: @escaping (UInt16) -> Bool = { CGEventSource.keyState(.combinedSessionState, key: $0) },
+        mouseButtonIsDown: @escaping (Int) -> Bool = { button in
+            guard let number = UInt32(exactly: button), let button = CGMouseButton(rawValue: number) else { return false }
+            return CGEventSource.buttonState(.combinedSessionState, button: button)
+        }
+    ) {
+        self.keyIsDown = keyIsDown
+        self.mouseButtonIsDown = mouseButtonIsDown
+    }
+
     @discardableResult func start() -> Bool {
         installLocalMonitor()
         draining = false
         resetGesture()
-        router.reconcileHeldKeys { CGEventSource.keyState(.combinedSessionState, key: $0) }
+        router.reconcileHeldKeys(keyIsDown)
         if let tap = tap {
             CGEvent.tapEnable(tap: tap, enable: true)
             failureReason = ""
@@ -90,15 +103,16 @@ final class EventListener {
         triggerMatcher.reset()
         shortcutModifiersHeld = false
         dismissedForModifiers = false
-        let keys = Set((0..<128).map(UInt16.init).filter { CGEventSource.keyState(.combinedSessionState, key: $0) })
-        let buttons = Set((0..<32).filter { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: UInt32($0))!) })
+        // Modifier keys (Command through Fn) are tracked through flagsChanged.
+        let keys = Set((0..<128).map(UInt16.init).filter { !(54...63).contains($0) && keyIsDown($0) })
+        let buttons = Set((0..<32).filter(mouseButtonIsDown))
         recognizer.reset(heldKeys: keys, heldMouseButtons: buttons)
     }
     func prepareLocalSession() {
         guard !hasWorkingTap else { return }
         // Releases outside our app are unavailable to the local monitor.
         resetGesture()
-        router.reconcileHeldKeys { CGEventSource.keyState(.combinedSessionState, key: $0) }
+        router.reconcileHeldKeys(keyIsDown)
     }
     func updateOverlayMonitoring() {
         installLocalMonitor()
@@ -171,7 +185,7 @@ final class EventListener {
     func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             resetGesture()
-            router.reconcileHeldKeys { CGEventSource.keyState(.combinedSessionState, key: $0) }
+            router.reconcileHeldKeys(keyIsDown)
             dismiss()
             if let tap = tap { CGEvent.tapEnable(tap: tap, enable: true) }
             DispatchQueue.main.async { [weak self] in
@@ -202,6 +216,10 @@ final class EventListener {
         let flags = modifiers(event.flags)
         switch type {
         case .flagsChanged:
+            // A key or button release may have been delivered outside this tap.
+            if flags == .command && (code == 54 || code == 55) {
+                recognizer.reconcileHeldInputs(keyIsDown: keyIsDown, mouseButtonIsDown: mouseButtonIsDown)
+            }
             recognizer.maximumDuration = maximumDuration()
             let time = Double(event.timestamp) / 1_000_000_000
             let tap = recognizer.flagsChanged(keyCode: code, modifiers: flags, time: time)

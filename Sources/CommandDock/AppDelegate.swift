@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let store = AppStore()
     private let listener = EventListener()
     private var statusItem: NSStatusItem!
+    private var updater: AppUpdater?
     private var overlay: LauncherPanel?
     private var settingsWindow: NSWindow?
     private var subscriptions: Set<AnyCancellable> = []
@@ -143,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addItem("暂停 / 恢复监听", action: #selector(togglePause), to: menu)
         addItem("重新连接键盘监听", action: #selector(reconnect), to: menu)
         menu.addItem(.separator())
+        updater = AppUpdater(menu: menu, statusItem: statusItem)
         addItem("退出 CommandDock", action: #selector(quit), to: menu)
         statusItem.menu = menu
     }

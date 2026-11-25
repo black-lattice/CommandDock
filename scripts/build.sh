@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION="${VERSION:-1.1.0}"
+VERSION="${VERSION:-1.1.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 NOTARIZE="${NOTARIZE:-0}"
@@ -9,12 +9,22 @@ if [[ "$NOTARIZE" == 1 ]]; then
   [[ "$SIGNING_IDENTITY" != - ]] || { echo '公证需要 Developer ID Application 签名。' >&2; exit 1; }
   : "${APPLE_ID:?缺少 APPLE_ID}" "${APPLE_TEAM_ID:?缺少 APPLE_TEAM_ID}" "${APPLE_APP_PASSWORD:?缺少 APPLE_APP_PASSWORD}"
 fi
+SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(cat scripts/sparkle-public-key.txt)}"
+SU_FEED_URL="${SU_FEED_URL:-https://github.com/black-lattice/CommandDock/releases/latest/download/appcast.xml}"
+if ! [[ "$SPARKLE_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+  echo '缺少有效的 Sparkle Ed25519 公钥。' >&2
+  exit 1
+fi
 OUT="${OUT_DIR:-dist}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
-APP="$OUT/CommandDock.app"
+STAGING="$(mktemp -d "$OUT/.package.XXXXXX")"
+trap 'rm -rf "$STAGING"' EXIT
+APP="$STAGING/payload/CommandDock.app"
+SPARKLE_ARTIFACT=".build/arm64/artifacts/sparkle/Sparkle"
 for ARCH in arm64 x86_64; do
-  swift build -c release --arch "$ARCH" --scratch-path ".build/$ARCH"
+  swift build -c release --arch "$ARCH" --scratch-path ".build/$ARCH" \
+    -Xlinker -rpath -Xlinker '@executable_path/../Frameworks'
 done
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 ARM_BIN="$(swift build -c release --arch arm64 --scratch-path .build/arm64 --show-bin-path)/CommandDock"
@@ -39,7 +49,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict></plist>
 PLIST
+plutil -insert SUFeedURL -string "$SU_FEED_URL" "$APP/Contents/Info.plist"
+plutil -insert SURequireSignedFeed -bool YES "$APP/Contents/Info.plist"
+plutil -insert SUPublicEDKey -string "$SPARKLE_PUBLIC_KEY" "$APP/Contents/Info.plist"
 swift scripts/icon.swift "$APP/Contents/Resources"
+bash scripts/embed-sparkle.sh "$SPARKLE_ARTIFACT" "$APP" "$SIGNING_IDENTITY"
 if [[ "$SIGNING_IDENTITY" == - ]]; then
   codesign --force --sign - --timestamp=none "$APP"
 else
@@ -65,11 +79,8 @@ if [[ "$NOTARIZE" == 1 ]]; then
   rm "$OUT/$NAME.zip"
   ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$NAME.zip"
 fi
-STAGING="$(mktemp -d)"
-trap 'rm -rf "$STAGING"' EXIT
-ditto "$APP" "$STAGING/CommandDock.app"
-ln -s /Applications "$STAGING/Applications"
-hdiutil create -volname CommandDock -srcfolder "$STAGING" -ov -format UDZO "$OUT/$NAME.dmg"
+ln -s /Applications "$STAGING/payload/Applications"
+hdiutil create -volname CommandDock -srcfolder "$STAGING/payload" -ov -format UDZO "$OUT/$NAME.dmg"
 if [[ "$NOTARIZE" == 1 ]]; then
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp "$OUT/$NAME.dmg"
   notarize "$OUT/$NAME.dmg"
@@ -77,4 +88,11 @@ if [[ "$NOTARIZE" == 1 ]]; then
   xcrun stapler validate "$OUT/$NAME.dmg"
 fi
 (cd "$OUT" && shasum -a 256 "$NAME.zip" "$NAME.dmg" > SHA256SUMS.txt)
-printf 'Built %s (Intel + Apple Silicon, macOS 13+)\n' "$APP"
+if [[ -e "$OUT/CommandDock.app" ]]; then
+  mv "$OUT/CommandDock.app" "$STAGING/previous.app"
+fi
+if ! mv "$APP" "$OUT/CommandDock.app"; then
+  [[ ! -e "$STAGING/previous.app" ]] || mv "$STAGING/previous.app" "$OUT/CommandDock.app"
+  exit 1
+fi
+printf 'Built %s (Intel + Apple Silicon, macOS 13+)\n' "$OUT/CommandDock.app"
